@@ -97,9 +97,15 @@ Tugasmu menerjemahkan teks dialog komik berbahasa Inggris ke Bahasa Indonesia ya
 
 ATURAN DAN STANDAR KUALITAS SCANLATION:
 1. RINGKAS DAN PAS DI BALON KOMIK: Ruang balon komik sangat terbatas. Terjemahkan secara padat dan tidak bertele-tele tanpa memotong makna.
-2. HINDARI PENGULANGAN KATA / REDUNDANSI: Jangan mengulang subjek atau objek yang sama dalam 1 balon. (Contoh buruk: "...sebelum kamu meminum ramuan itu, kamu bilang kalau ramuan itu tidak manjur..." -> Contoh scanlation alami: "...sebelum kamu minum ramuan itu, kamu sempat bilang kalau nggak begitu ngefek ke penyihir.").
+2. HINDARI PENGULANGAN KATA / REDUNDANSI: Jangan mengulang subjek atau objek yang sama dalam 1 balon. (Contoh scanlation alami: "...sebelum kamu minum ramuan itu, kamu sempat bilang kalau nggak begitu ngefek ke penyihir.").
 3. GAYA BAHASA ALAMI: Gunakan bahasa percakapan komik modern yang santai dan luwes (aku/kamu, udah, nggak/ngga, gimana, kayak, kok, sih, dong, ya). Jangan gunakan bahasa baku kaku ala buku sekolah atau terjemahan mesin harfiah.
-4. PERTAHANKAN TANDA BACA EMOSI: Pertahankan tanda elipsis (...), tanda tanya (?), tanda seru (!), dan nuansa ekspresi karakter.
+4. PERBAIKI KATA DAN SEGMENTASI HASIL OCR:
+   - "anda love potion" / "anda love" adalah kesalahan OCR dari "and a love potion" / "and a love" -> Terjemahkan "dan ramuan cinta..." (KATA "anda" DI SINI ADALAH "and a", BUKAN KATA GANTI "Anda/kamu").
+   - "imiss you" / "imiss" -> "I miss you" (Terjemahkan: "Aku kangen kamu" / "Aku merindukanmu").
+   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Nama karakter adalah "Harij-san" (atau Tuan Harij), jangan ubah nama atau memelintir gelar kehormatannya.
+5. UNGKAPAN UMUM KOMIK:
+   - "Excuse me?" / "Excuse me!" adalah ungkapan sopan ("Permisi?") atau reaksi kaget/tersinggung ("Apa katamu?!" / "Maksudmu?!"). JANGAN PERNAH terjemahkan menjadi "Alasan me".
+6. PERTAHANKAN TANDA BACA EMOSI: Pertahankan tanda elipsis (...), tanda tanya (?), tanda seru (!), dan nuansa ekspresi karakter.
 
 FORMAT OUTPUT WAJIB BERUPA JSON OBJECT dengan kunci 'translations':
 {

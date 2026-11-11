@@ -25,35 +25,53 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         return true;
     }
 
-    if clean.chars().all(|c| c.is_ascii_digit()) {
+    let stripped: String = clean.chars().filter(|c| c.is_alphanumeric()).collect();
+    if stripped.is_empty() {
         return true;
     }
 
-    if clean.chars().all(|c| c.is_ascii_punctuation() || c.is_whitespace()) {
+    if clean.chars().all(|c| c.is_ascii_digit()) || stripped.chars().all(|c| c.is_ascii_digit()) {
         return true;
     }
 
-    if clean.len() == 1 && score < 0.85 && clean != "I" && clean != "A" && clean != "!" && clean != "?" {
+    let mixed_re = Regex::new(r"^\d+[A-Za-z]+$|^[A-Za-z]+\d+$").unwrap();
+    if mixed_re.is_match(&stripped) {
         return true;
     }
 
-    if score < 0.58 {
-        return true;
+    let valid_short: HashSet<&'static str> = [
+        "NO", "OK", "GO", "HI", "OH", "AH", "ME", "MY", "HE", "WE", "SO",
+        "DO", "IF", "IN", "ON", "AT", "TO", "UP", "BY", "IS", "AM", "US", "IT"
+    ].into_iter().collect();
+
+    if stripped.len() <= 2 {
+        let up = stripped.to_uppercase();
+        if !valid_short.contains(up.as_str()) && up != "I" && up != "A" {
+            return true;
+        }
+        if score < 0.85 && (up == "I" || up == "A") {
+            return true;
+        }
+        if !valid_short.contains(up.as_str()) && score < 0.88 {
+            return true;
+        }
     }
 
-    if h > w * 1.3 && clean.len() > 1 && score < 0.88 {
-        return true;
+    let paren_re = Regex::new(r"[\(\[\{]([A-Za-z\s\-]{2,16})[\)\]\}]").unwrap();
+    if let Some(caps) = paren_re.captures(clean) {
+        let inner = caps[1].to_uppercase();
+        let sfx_terms = [
+            "WHOOSH", "GAPE", "FWIP", "THUD", "TWITCH", "CLENCH", "SIGH",
+            "GASP", "STEP", "CREAK", "BLUSH", "SHIVER", "DRIP", "POKE"
+        ];
+        if sfx_terms.iter().any(|&term| inner.contains(term)) {
+            return true;
+        }
     }
 
-    let mixed_digit_re = Regex::new(r"\d+[A-Za-z]|[A-Za-z]+\d+").unwrap();
-    if mixed_digit_re.is_match(clean) && score < 0.85 {
-        return true;
-    }
-
-    let paren_re = Regex::new(r"\([A-Za-z\s\-]{2,12}\)|\[[A-Za-z\s\-]{2,12}\]").unwrap();
-    let words: Vec<&str> = clean
+    let words: Vec<String> = clean
         .split_whitespace()
-        .map(|w| w.trim_matches(|c: char| c.is_ascii_punctuation()))
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase())
         .filter(|w| !w.is_empty())
         .collect();
 
@@ -61,52 +79,43 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         return true;
     }
 
-    if paren_re.is_match(clean) && words.len() <= 5 {
+    let known_sfx: HashSet<&'static str> = [
+        "POKAAAN", "POKAN", "POKA", "POK", "BIKU", "PIKU", "GIKU", "PEKO", "ZUKI", "KIRI", "CKIRI",
+        "ZU", "ZUZU", "SHFD", "DOKI", "PATA", "NIKORI", "DODODO", "GOGOGO",
+        "FWIP", "WHOOSH", "THUD", "GULP", "WHIRL", "TWITCH", "GAPE", "CHUUSHD", "CLENCH",
+        "SHIIN", "CHIRA", "GYU", "DOSA", "PASA", "WINCE", "BA", "BAA", "BASH",
+        "GLL", "PAT", "COLTD", "CTWITCHD", "CCLENCHD", "HMPH", "TCH", "TSK", "PFFT",
+        "ACK", "AGH", "ARGH", "UGH", "GAAH", "KAH", "KHA", "NGH", "NNGH", "OOF",
+        "RS", "ACR", "FW", "FLL", "FLLS", "IP", "FOI"
+    ].into_iter().collect();
+
+    let sfx_substrings = [
+        "FWIP", "WHOOSH", "ACR", "CLENCH", "TWITCH", "GAPE", "THUD", "GULP", "ACK",
+        "POKAAAN", "POKAN", "DOKI", "HMPH", "PFFT", "CHIRA", "NIKORI"
+    ];
+    if words.len() <= 2 && words.iter().any(|w| sfx_substrings.iter().any(|&sub| w.contains(sub))) {
         return true;
     }
 
-    let known_romaji_sfx: HashSet<&'static str> = [
-        "POKAAAN", "POKAN", "BIKU", "PIKU", "GIKU", "PEKO", "ZUKI", "KIRI", "CKIRI",
-        "ZU", "ZUZU", "SHFD", "DOKI", "PATA", "NIKORI", "DODODO", "GOGOGO",
-        "FWIP", "WHOOSH", "THUD", "GULP", "WHIRL", "TWITCH", "GAPE", "CHUUSHD",
-        "SHIIN", "CHIRA", "GYU", "DOSA", "PASA", "WINCE", "BA", "BAA", "BASH",
-        "GLL", "PAT", "COLTD", "CTWITCHD", "CCLENCHD"
-    ].into_iter().collect();
+    let non_sfx_words: Vec<&String> = words
+        .iter()
+        .filter(|w| !known_sfx.contains(w.as_str()) && w.as_str() != "A" && w.as_str() != "AN" && w.as_str() != "THE")
+        .collect();
 
-    let known_junk_words: HashSet<&'static str> = [
-        "ACR", "RS", "FW", "FLL", "FLLS", "IP", "FOI"
-    ].into_iter().collect();
-
-    if words.len() <= 3 {
-        let mut all_sfx = true;
-        for w in &words {
-            let uw = w.to_uppercase();
-            if known_romaji_sfx.contains(uw.as_str()) || known_junk_words.contains(uw.as_str()) {
-                continue;
-            }
-            if uw.contains("TWITCH") || uw.contains("CLENCH") {
-                continue;
-            }
-            if has_repeated_letters(&uw) {
-                continue;
-            }
-            all_sfx = false;
-            break;
-        }
-        if all_sfx {
-            return true;
-        }
+    if non_sfx_words.is_empty() || non_sfx_words.iter().all(|w| w.len() <= 1) {
+        return true;
     }
 
-    if words.len() == 1 {
-        let uw = words[0].to_uppercase();
-        if known_junk_words.contains(uw.as_str())
-            || known_romaji_sfx.contains(uw.as_str())
-            || uw.contains("TWITCH")
-            || uw.contains("CLENCH")
-        {
-            return true;
-        }
+    if words.iter().any(|w| w == "ACR" || w == "RS" || w == "FLL" || w == "FLLS" || w == "FW" || w == "FOI") && words.len() <= 3 {
+        return true;
+    }
+
+    if words.len() <= 2 && words.iter().all(|w| has_repeated_letters(w)) {
+        return true;
+    }
+
+    if h > w * 1.35 && clean.len() > 1 && score < 0.88 {
+        return true;
     }
 
     false
@@ -124,38 +133,98 @@ pub fn normalize_source_text(text: &str) -> String {
     let trailing_hyphen_re = Regex::new(r"\b([A-Za-z]+)-\b").unwrap();
     s = trailing_hyphen_re.replace_all(&s, "$1").to_string();
 
+    let honorific_u_re = Regex::new(r"(?i)\b([A-Za-z]+)u(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
+    s = honorific_u_re.replace_all(&s, "$1-$2").to_string();
+
+    let hariju_honor_re = Regex::new(r"(?i)\bhariju[-~]?(san|sama|kun|chan)\b").unwrap();
+    s = hariju_honor_re.replace_all(&s, "Harij-$1").to_string();
+
+    let hariju_standalone_re = Regex::new(r"(?i)\bhariju\b").unwrap();
+    s = hariju_standalone_re.replace_all(&s, "Harij").to_string();
+
+    let honorific_dash_re = Regex::new(r"(?i)\b([A-Za-z]+)\s*[-~—]\s*(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
+    s = honorific_dash_re.replace_all(&s, "$1-$2").to_string();
+
     let glued_replacements = [
-        (Regex::new(r"(?i)\bSOTHIS\b").unwrap(), "SO THIS"),
-        (Regex::new(r"(?i)\bTHESWEET\b").unwrap(), "THE SWEET"),
-        (Regex::new(r"(?i)\bTHATIS\b").unwrap(), "THAT IS"),
-        (Regex::new(r"(?i)\bAFTERWHAT\b").unwrap(), "AFTER WHAT"),
-        (Regex::new(r"(?i)\bASKME\b").unwrap(), "ASK ME"),
-        (Regex::new(r"(?i)\bLIKEAND\b").unwrap(), "LIKE AND"),
-        (Regex::new(r"(?i)\bTOBRING\b").unwrap(), "TO BRING"),
-        (Regex::new(r"(?i)\bSEEME\b").unwrap(), "SEE ME"),
-        (Regex::new(r"(?i)\bMYOWN\b").unwrap(), "MY OWN"),
-        (Regex::new(r"(?i)\bWHATA\b").unwrap(), "WHAT A"),
-        (Regex::new(r"(?i)\bLIKETO\b").unwrap(), "LIKE TO"),
-        (Regex::new(r"(?i)\bTOMAKE\b").unwrap(), "TO MAKE"),
-        (Regex::new(r"(?i)\bTHENIT\b").unwrap(), "THEN IT"),
-        (Regex::new(r"(?i)\bTHENI\b").unwrap(), "THEN I"),
-        (Regex::new(r"(?i)\bBUTIFI\b").unwrap(), "BUT IF I"),
-        (Regex::new(r"(?i)\bBUTIF\b").unwrap(), "BUT IF"),
-        (Regex::new(r"(?i)\bBUTI\b").unwrap(), "BUT I"),
-        (Regex::new(r"(?i)\bANDNOWI\b").unwrap(), "AND NOW I"),
-        (Regex::new(r"(?i)\bNOWI\b").unwrap(), "NOW I"),
-        (Regex::new(r"(?i)\bWHYIS\b").unwrap(), "WHY IS"),
-        (Regex::new(r"(?i)\bDOYOU\b").unwrap(), "DO YOU"),
-        (Regex::new(r"(?i)\bTRYTO\b").unwrap(), "TRY TO"),
-        (Regex::new(r"(?i)\bINEVER\b").unwrap(), "I NEVER"),
-        (Regex::new(r"(?i)\bIMEAN\b").unwrap(), "I MEAN"),
-        (Regex::new(r"(?i)\bIOVER\b").unwrap(), "I OVER"),
-        (Regex::new(r"(?i)\bIDIDN'T\b").unwrap(), "I DIDN'T"),
-        (Regex::new(r"(?i)\bIDON'T\b").unwrap(), "I DON'T"),
-        (Regex::new(r"(?i)\bIWAS\b").unwrap(), "I WAS"),
-        (Regex::new(r"(?i)\bIONLY\b").unwrap(), "I ONLY"),
-        (Regex::new(r"(?i)\bPOTIONI\b").unwrap(), "POTION I"),
-        (Regex::new(r"(?i)\bITWAS\b").unwrap(), "IT WAS"),
+        (Regex::new(r"(?i)\banda\b").unwrap(), "and a"),
+        (Regex::new(r"(?i)\bfora\b").unwrap(), "for a"),
+        (Regex::new(r"(?i)\bwitha\b").unwrap(), "with a"),
+        (Regex::new(r"(?i)\bwhata\b").unwrap(), "what a"),
+        (Regex::new(r"(?i)\balove\b").unwrap(), "a love"),
+        (Regex::new(r"(?i)\baperson\b").unwrap(), "a person"),
+        (Regex::new(r"(?i)\bataperson\b").unwrap(), "at a person"),
+        (Regex::new(r"(?i)\bina\b").unwrap(), "in a"),
+        (Regex::new(r"(?i)\bofa\b").unwrap(), "of a"),
+        (Regex::new(r"(?i)\basina\b").unwrap(), "as in a"),
+        (Regex::new(r"(?i)\blikea\b").unwrap(), "like a"),
+        (Regex::new(r"(?i)\bhavea\b").unwrap(), "have a"),
+        (Regex::new(r"(?i)\bsucha\b").unwrap(), "such a"),
+        (Regex::new(r"(?i)\bonlya\b").unwrap(), "only a"),
+        (Regex::new(r"(?i)\bimiss\b").unwrap(), "I miss"),
+        (Regex::new(r"(?i)\biwant\b").unwrap(), "I want"),
+        (Regex::new(r"(?i)\bineed\b").unwrap(), "I need"),
+        (Regex::new(r"(?i)\biknow\b").unwrap(), "I know"),
+        (Regex::new(r"(?i)\bithink\b").unwrap(), "I think"),
+        (Regex::new(r"(?i)\bihave\b").unwrap(), "I have"),
+        (Regex::new(r"(?i)\bihad\b").unwrap(), "I had"),
+        (Regex::new(r"(?i)\bihope\b").unwrap(), "I hope"),
+        (Regex::new(r"(?i)\biwish\b").unwrap(), "I wish"),
+        (Regex::new(r"(?i)\bilove\b").unwrap(), "I love"),
+        (Regex::new(r"(?i)\bifeltlike\b").unwrap(), "I felt like"),
+        (Regex::new(r"(?i)\bifelt\b").unwrap(), "I felt"),
+        (Regex::new(r"(?i)\bisaid\b").unwrap(), "I said"),
+        (Regex::new(r"(?i)\biwas\b").unwrap(), "I was"),
+        (Regex::new(r"(?i)\biwent\b").unwrap(), "I went"),
+        (Regex::new(r"(?i)\biam\b").unwrap(), "I am"),
+        (Regex::new(r"(?i)\bican\b").unwrap(), "I can"),
+        (Regex::new(r"(?i)\bicould\b").unwrap(), "I could"),
+        (Regex::new(r"(?i)\biwould\b").unwrap(), "I would"),
+        (Regex::new(r"(?i)\biassumed\b").unwrap(), "I assumed"),
+        (Regex::new(r"(?i)\bionly\b").unwrap(), "I only"),
+        (Regex::new(r"(?i)\binever\b").unwrap(), "I never"),
+        (Regex::new(r"(?i)\bimean\b").unwrap(), "I mean"),
+        (Regex::new(r"(?i)\biover\b").unwrap(), "I over"),
+        (Regex::new(r"(?i)\biasked\b").unwrap(), "I asked"),
+        (Regex::new(r"(?i)\bicall\b").unwrap(), "I call"),
+        (Regex::new(r"(?i)\bitold\b").unwrap(), "I told"),
+        (Regex::new(r"(?i)\bijust\b").unwrap(), "I just"),
+        (Regex::new(r"(?i)\bididn't\b|\bididnt\b").unwrap(), "I didn't"),
+        (Regex::new(r"(?i)\bidon't\b|\bidont\b").unwrap(), "I don't"),
+        (Regex::new(r"(?i)\bi'dbeen\b|\bidbeen\b").unwrap(), "I'd been"),
+        (Regex::new(r"(?i)\bi'dbeenso\b|\bidbeenso\b").unwrap(), "I'd been so"),
+        (Regex::new(r"(?i)\bifididn't\b|\bifididnt\b").unwrap(), "if I didn't"),
+        (Regex::new(r"(?i)\bifidid\b").unwrap(), "if I did"),
+        (Regex::new(r"(?i)\bifidon't\b").unwrap(), "if I don't"),
+        (Regex::new(r"(?i)\bsoi\b").unwrap(), "so I"),
+        (Regex::new(r"(?i)\bthati\b").unwrap(), "that I"),
+        (Regex::new(r"(?i)\bthingi\b").unwrap(), "thing I"),
+        (Regex::new(r"(?i)\btheni\b").unwrap(), "then I"),
+        (Regex::new(r"(?i)\bbuti\b").unwrap(), "but I"),
+        (Regex::new(r"(?i)\bnowi\b").unwrap(), "now I"),
+        (Regex::new(r"(?i)\bthefirst\b").unwrap(), "the first"),
+        (Regex::new(r"(?i)\bthesweet\b").unwrap(), "the sweet"),
+        (Regex::new(r"(?i)\bthatis\b").unwrap(), "that is"),
+        (Regex::new(r"(?i)\bafterwhat\b").unwrap(), "after what"),
+        (Regex::new(r"(?i)\baskme\b").unwrap(), "ask me"),
+        (Regex::new(r"(?i)\blikeand\b").unwrap(), "like and"),
+        (Regex::new(r"(?i)\btobring\b").unwrap(), "to bring"),
+        (Regex::new(r"(?i)\bseeme\b").unwrap(), "see me"),
+        (Regex::new(r"(?i)\bmyown\b").unwrap(), "my own"),
+        (Regex::new(r"(?i)\bliketo\b").unwrap(), "like to"),
+        (Regex::new(r"(?i)\btomake\b").unwrap(), "to make"),
+        (Regex::new(r"(?i)\bthenit\b").unwrap(), "then it"),
+        (Regex::new(r"(?i)\bbutifi\b").unwrap(), "but if I"),
+        (Regex::new(r"(?i)\bbutif\b").unwrap(), "but if"),
+        (Regex::new(r"(?i)\bandnowi\b").unwrap(), "and now I"),
+        (Regex::new(r"(?i)\bwhyis\b").unwrap(), "why is"),
+        (Regex::new(r"(?i)\bdoyou\b").unwrap(), "do you"),
+        (Regex::new(r"(?i)\btryto\b").unwrap(), "try to"),
+        (Regex::new(r"(?i)\bpotionthat\b").unwrap(), "potion that"),
+        (Regex::new(r"(?i)\bpotionis\b").unwrap(), "potion is"),
+        (Regex::new(r"(?i)\bpotioni\b").unwrap(), "potion I"),
+        (Regex::new(r"(?i)\banotherlove\b").unwrap(), "another love"),
+        (Regex::new(r"(?i)\bitwas\b").unwrap(), "it was"),
+        (Regex::new(r"(?i)\bsothis\b").unwrap(), "so this"),
     ];
 
     for (re, rep) in glued_replacements.iter() {
