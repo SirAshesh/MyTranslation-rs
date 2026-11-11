@@ -1,0 +1,18 @@
+# Environment variables and secrets
+.env
+.env.*
+*.env
+
+# Rust build artifacts
+target/
+**/target/
+Cargo.lock
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Test dummy images and artifacts
+dummy/
+*.png
+*.webp
