@@ -9,7 +9,7 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
     let mut lines = Vec::new();
     for item in ocr_lines {
         let text = item.text.trim().to_string();
-        if text.is_empty() || item.score < 0.38 {
+        if text.is_empty() || item.score < 0.32 {
             continue;
         }
 
