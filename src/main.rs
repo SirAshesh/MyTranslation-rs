@@ -65,9 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Loading comic font from {}...", font_path);
     let renderer = Arc::new(ComicRenderer::new(font_path)?);
 
-    let ocr_port = 51055;
-    let mut ocr_mgr = OcrManager::new(ocr_port);
-    ocr_mgr.ensure_started().await?;
+    let ocr_mgr = OcrManager::new(51055)?;
     let ocr = Arc::new(Mutex::new(ocr_mgr));
 
     let local_trans = std::env::var("LOCAL_TRANSLATION")
@@ -82,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         marian_mgr.ensure_started().await?;
         (
             Translator::Marian(Arc::new(Mutex::new(marian_mgr))),
-            "RapidOCR + MarianMT Local + Rust Inpainting".to_string(),
+            "Native Rust DirectML OCR + MarianMT Local + Rust Inpainting".to_string(),
         )
     } else {
         info!("Using cloud DeepSeek V3 translation engine...");
@@ -91,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let client = deepseek::DeepSeekClient::new(deepseek_api_key);
         (
             Translator::DeepSeek(client),
-            "RapidOCR + DeepSeek V3 + Rust Inpainting".to_string(),
+            "Native Rust DirectML OCR + DeepSeek V3 + Rust Inpainting".to_string(),
         )
     };
 

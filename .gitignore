@@ -8,5 +8,6 @@ __pycache__/
 *.pyc
 dummy/
 local/cache/
+models/
 *.png
 *.webp

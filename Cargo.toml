@@ -20,3 +20,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rayon = "1.10"
 regex = "1.11"
+rapidocr-core = { version = "0.2.2", default-features = false, features = ["model-download", "directml"] }
+ort = { version = "=2.0.0-rc.12", features = ["directml"] }

@@ -49,10 +49,10 @@ impl Pipeline {
 
         let t_ocr = std::time::Instant::now();
         let ocr_lines = {
-            let ocr_guard = self.ocr.lock().await;
-            ocr_guard.run_ocr(image_bytes).await?
+            let mut ocr_guard = self.ocr.lock().await;
+            ocr_guard.run_ocr(&img)?
         };
-        info!("OCR detected {} lines in {:?}", ocr_lines.len(), t_ocr.elapsed());
+        info!("Native OCR detected {} lines in {:?}", ocr_lines.len(), t_ocr.elapsed());
 
         let bubbles = cluster_lines(ocr_lines, width, height);
         info!("Clustered into {} speech bubbles", bubbles.len());
