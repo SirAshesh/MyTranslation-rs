@@ -99,10 +99,13 @@ ATURAN DAN STANDAR KUALITAS SCANLATION:
 1. RINGKAS DAN PAS DI BALON KOMIK: Ruang balon komik sangat terbatas. Terjemahkan secara padat dan tidak bertele-tele tanpa memotong makna.
 2. HINDARI PENGULANGAN KATA / REDUNDANSI: Jangan mengulang subjek atau objek yang sama dalam 1 balon. (Contoh scanlation alami: "...sebelum kamu minum ramuan itu, kamu sempat bilang kalau nggak begitu ngefek ke penyihir.").
 3. GAYA BAHASA ALAMI: Gunakan bahasa percakapan komik modern yang santai dan luwes (aku/kamu, udah, nggak/ngga, gimana, kayak, kok, sih, dong, ya). Jangan gunakan bahasa baku kaku ala buku sekolah atau terjemahan mesin harfiah.
-4. PERBAIKI KATA DAN SEGMENTASI HASIL OCR:
-   - "anda love potion" / "anda love" adalah kesalahan OCR dari "and a love potion" / "and a love" -> Terjemahkan "dan ramuan cinta..." (KATA "anda" DI SINI ADALAH "and a", BUKAN KATA GANTI "Anda/kamu").
-   - "imiss you" / "imiss" -> "I miss you" (Terjemahkan: "Aku kangen kamu" / "Aku merindukanmu").
-   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Nama karakter adalah "Harij-san" (atau Tuan Harij), jangan ubah nama atau memelintir gelar kehormatannya.
+4. KOREKSI KATA MENEMPEL / TANPA SPASI DARI OCR:
+   Teks input bahasa Inggris berasal dari OCR manga yang sering menghilangkan spasi antar kata karena font yang rapat.
+   - "anda love potion" / "alovepotion" -> maksudnya "and a love potion" / "a love potion" -> Terjemahkan: "dan ramuan cinta..." / "ramuan cinta." (JANGAN terjemahkan "anda" sebagai "kamu"!).
+   - "imiss you" -> maksudnya "I miss you" -> Terjemahkan: "aku kangen kamu".
+   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Nama karakter adalah "Harij-san" (atau Tuan Harij).
+   - "ICAN'TEVEN", "ITWASALL ANILLUSION", "IFSIRHARIJ", "ISTILLVIVIDLY", "THATOCCURRED" -> Pisahkan kata-katanya dan pahami maknanya dengan benar.
+   PASTIKAN PADA HASIL TERJEMAHAN BAHASA INDONESIA SEMUA KATA TERPISAH DENGAN SPASI YANG TEPAT DAN TIDAK ADA KATA YANG MENEMPEL!
 5. UNGKAPAN UMUM KOMIK:
    - "Excuse me?" / "Excuse me!" adalah ungkapan sopan ("Permisi?") atau reaksi kaget/tersinggung ("Apa katamu?!" / "Maksudmu?!"). JANGAN PERNAH terjemahkan menjadi "Alasan me".
 6. PERTAHANKAN TANDA BACA EMOSI: Pertahankan tanda elipsis (...), tanda tanya (?), tanda seru (!), dan nuansa ekspresi karakter.
