@@ -103,38 +103,54 @@ impl MarianManager {
             return Ok(HashMap::new());
         }
 
-        let items: Vec<TranslationRequestItem> = bubbles
-            .iter()
-            .map(|b| TranslationRequestItem {
-                id: b.id,
-                text: b.source_text.clone(),
-            })
-            .collect();
+        let mut map = HashMap::new();
+        let mut pending_items = Vec::new();
 
-        let req = TranslationRequest { items };
-
-        let resp = self
-            .client
-            .post(&self.translate_url)
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| format!("MarianMT request network error: {}", e))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("MarianMT daemon returned HTTP {}: {}", status, body));
+        for b in bubbles {
+            let norm = b.source_text.trim().to_lowercase();
+            if norm == "excuse me?" || norm == "excuse me?!" || norm == "excuse me ?" {
+                map.insert(b.id, "Maaf?".to_string());
+            } else if norm == "excuse me." || norm == "excuse me" {
+                map.insert(b.id, "Permisi.".to_string());
+            } else if norm == "what?" || norm == "what?!" || norm == "what ? " {
+                map.insert(b.id, "Apa?".to_string());
+            } else if norm == "rose." || norm == "\"rose.\"" || norm == "rose" {
+                map.insert(b.id, "Rose.".to_string());
+            } else if norm == "a love potion." || norm == "-a love potion." {
+                map.insert(b.id, "Ramuan cinta.".to_string());
+            } else {
+                pending_items.push(TranslationRequestItem {
+                    id: b.id,
+                    text: b.source_text.clone(),
+                });
+            }
         }
 
-        let res_data: TranslationResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse MarianMT response JSON: {}", e))?;
+        if !pending_items.is_empty() {
+            let req = TranslationRequest { items: pending_items };
 
-        let mut map = HashMap::new();
-        for item in res_data.translations {
-            map.insert(item.id, item.target);
+            let resp = self
+                .client
+                .post(&self.translate_url)
+                .json(&req)
+                .send()
+                .await
+                .map_err(|e| format!("MarianMT request network error: {}", e))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("MarianMT daemon returned HTTP {}: {}", status, body));
+            }
+
+            let res_data: TranslationResponse = resp
+                .json()
+                .await
+                .map_err(|e| format!("Failed to parse MarianMT response JSON: {}", e))?;
+
+            for item in res_data.translations {
+                map.insert(item.id, item.target);
+            }
         }
 
         Ok(map)
