@@ -1,0 +1,324 @@
+<div class="app-layout">
+    <aside class="sidebar" aria-label="Sidebar">
+        <div>
+            <div class="brand">
+                <h1>MyTranslation</h1>
+                <p>DirectML OCR &amp; Scanlation</p>
+            </div>
+            <nav aria-label="Primary navigation">
+                <ul class="nav-list" role="tablist">
+                    <li role="presentation">
+                        <button type="button" class="nav-btn" role="tab" id="tab-home" aria-controls="panel-home" aria-selected="true" data-target="home">
+                            Home
+                        </button>
+                    </li>
+                    <li role="presentation">
+                        <button type="button" class="nav-btn" role="tab" id="tab-playground" aria-controls="panel-playground" aria-selected="false" data-target="playground">
+                            Playground
+                        </button>
+                    </li>
+                    <li role="presentation">
+                        <button type="button" class="nav-btn" role="tab" id="tab-translation" aria-controls="panel-translation" aria-selected="false" data-target="translation">
+                            Translation
+                        </button>
+                    </li>
+                    <li role="presentation">
+                        <button type="button" class="nav-btn" role="tab" id="tab-settings" aria-controls="panel-settings" aria-selected="false" data-target="settings">
+                            Settings
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+
+        <div class="sidebar-footer">
+            <button type="button" class="btn-secondary" id="theme-btn" aria-pressed="false">Theme: Dark</button>
+        </div>
+    </aside>
+
+    <main class="content-area">
+        <section class="view-panel active" id="panel-home" role="tabpanel" aria-labelledby="tab-home">
+            <header class="page-header">
+                <div>
+                    <h2>Home</h2>
+                    <p>Runtime state and browser extension connection details.</p>
+                </div>
+                <button type="button" class="btn-secondary" id="refresh-btn">Refresh status</button>
+            </header>
+
+            <div class="home-grid">
+                <div>
+                    <div class="panel-box">
+                        <h3 class="box-title">Runtime telemetry</h3>
+                        <p class="box-desc">Live metrics reported by the local MyTranslation process.</p>
+                        <div class="kv-list">
+                            <div class="kv-row">
+                                <span class="kv-label">Process state</span>
+                                <span class="kv-val" id="stat-status">Checking...</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">Translation mode</span>
+                                <span class="kv-val" id="stat-mode">Checking...</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">Active model</span>
+                                <span class="kv-val" id="stat-model">Checking...</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">Credential state</span>
+                                <span class="kv-val" id="stat-key">Checking...</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">OCR engine</span>
+                                <span class="kv-val">RapidOCR DirectML</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">Pages translated</span>
+                                <span class="kv-val" id="stat-pages">0</span>
+                            </div>
+                            <div class="kv-row">
+                                <span class="kv-label">Port (config.json)</span>
+                                <span class="kv-val" id="stat-port">5000</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="panel-box">
+                        <h3 class="box-title">Extension endpoint</h3>
+                        <p class="box-desc">Paste this address into the ImageTrans Chrome extension options. The listening port is read from <code>config.json</code>.</p>
+                        <div class="endpoint-bar">
+                            <output class="endpoint-output" id="server-url-code">http://127.0.0.1:5000</output>
+                            <button type="button" class="btn-secondary" id="copy-url-btn">Copy URL</button>
+                        </div>
+                        <ol class="steps-list">
+                            <li>Open Chrome and select the ImageTrans extension options.</li>
+                            <li>Set Translation Mode to <code>ImageTrans (local or remote server)</code>.</li>
+                            <li>Paste the endpoint URL into the Server URL field and save.</li>
+                            <li>Configure your preferred translation backend in the <a href="#settings" id="goto-settings-link">Settings</a> tab.</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+
+            <div id="home-status-box" class="status-banner" role="status" aria-live="polite" data-state="loading">
+                [LOADING] Reading local runtime state...
+            </div>
+        </section>
+
+        <section class="view-panel" id="panel-playground" role="tabpanel" aria-labelledby="tab-playground">
+            <header class="page-header">
+                <div>
+                    <h2>Playground</h2>
+                    <p>Test OCR detection, bubble inpainting, and translation on a comic page.</p>
+                </div>
+            </header>
+
+            <div class="panel-box">
+                <form id="playground-form" novalidate>
+                    <div class="pg-controls">
+                        <div class="field" style="margin-bottom:0;">
+                            <label for="pg-file">Comic image file (.png, .jpg, .webp)</label>
+                            <input type="file" id="pg-file" accept="image/png,image/jpeg,image/webp" />
+                        </div>
+                        <div class="field" style="margin-bottom:0;">
+                            <label for="pg-source-lang">Source language</label>
+                            <select id="pg-source-lang">
+                                <option value="en">English (en)</option>
+                                <option value="ja">Japanese (ja)</option>
+                                <option value="zh">Chinese (zh)</option>
+                                <option value="ko">Korean (ko)</option>
+                            </select>
+                        </div>
+                        <div class="field" style="margin-bottom:0;">
+                            <label for="pg-target-lang">Target language</label>
+                            <select id="pg-target-lang">
+                                <option value="id">Indonesian (id)</option>
+                                <option value="en">English (en)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="action-row" style="margin-top:16px;">
+                        <button type="submit" class="btn-primary" id="pg-run-btn">Run translation</button>
+                        <button type="button" class="btn-secondary" id="pg-clear-btn">Clear</button>
+                        <a class="btn-link btn-secondary" id="pg-download-btn" href="#" download="translated-page.webp" style="display:none;">Download WebP</a>
+                    </div>
+                </form>
+
+                <div id="pg-status-box" class="status-banner" role="status" aria-live="polite" data-state="loading">
+                    [IDLE] Select an image file above and click Run translation.
+                </div>
+
+                <div class="pg-preview-grid">
+                    <div>
+                        <h3 class="box-title">Source image</h3>
+                        <div class="preview-frame" id="pg-src-frame">
+                            <span class="empty-text">[EMPTY] No source image selected.</span>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 class="box-title">Translated output</h3>
+                        <div class="preview-frame" id="pg-out-frame">
+                            <span class="empty-text">[EMPTY] Run translation to render output image.</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-box">
+                <h3 class="box-title">Detected dialogue boxes</h3>
+                <p class="box-desc">OCR text segments and translated lines returned by <code>POST /translate</code>.</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Source OCR text</th>
+                                <th>Translated text</th>
+                                <th>Geometry (x, y, w, h)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pg-boxes-tbody">
+                            <tr>
+                                <td colspan="4" class="mono" style="color:var(--muted);">[EMPTY] No dialogue boxes processed in this session.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="view-panel" id="panel-translation" role="tabpanel" aria-labelledby="tab-translation">
+            <header class="page-header">
+                <div>
+                    <h2>Translation</h2>
+                    <p>Interactive text translation sandbox with left-aligned chat response stream.</p>
+                </div>
+            </header>
+
+            <div class="panel-box">
+                <div class="chat-container">
+                    <div class="chat-top-bar">
+                        <div class="chat-selectors">
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <label for="chat-src-lang" style="font-size:0.8125rem;color:var(--muted);margin:0;">Source:</label>
+                                <select id="chat-src-lang">
+                                    <option value="en">English (en)</option>
+                                    <option value="ja">Japanese (ja)</option>
+                                    <option value="zh">Chinese (zh)</option>
+                                    <option value="ko">Korean (ko)</option>
+                                    <option value="id">Indonesian (id)</option>
+                                </select>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <label for="chat-tgt-lang" style="font-size:0.8125rem;color:var(--muted);margin:0;">Target:</label>
+                                <select id="chat-tgt-lang">
+                                    <option value="id">Indonesian (id)</option>
+                                    <option value="en">English (en)</option>
+                                    <option value="ja">Japanese (ja)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-secondary" id="chat-clear-btn">Clear conversation</button>
+                    </div>
+
+                    <div class="chat-feed" id="chat-stream" role="log" aria-live="polite">
+                        <div class="chat-row incoming">
+                            <div class="chat-bubble bubble-incoming">
+                                <div class="bubble-meta">
+                                    <span>MyTranslation</span>
+                                    <span>SYSTEM</span>
+                                </div>
+                                <div class="bubble-body">[READY] Enter dialogue text in the field below. Translated responses appear here on the left side in real time.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form class="chat-composer" id="chat-form" novalidate>
+                        <div class="composer-input-row">
+                            <textarea id="chat-input" class="composer-textarea" placeholder="Type or paste text to translate... (Ctrl+Enter to send)" rows="2" spellcheck="false" required></textarea>
+                            <button type="submit" class="btn-primary" id="chat-send-btn">Send</button>
+                        </div>
+                        <span class="composer-hint">Press Ctrl+Enter or click Send to submit. Output appears on the left as a chat response.</span>
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <section class="view-panel" id="panel-settings" role="tabpanel" aria-labelledby="tab-settings">
+            <header class="page-header">
+                <div>
+                    <h2>Settings</h2>
+                    <p>Select a translation mode and save credentials to local <code>config.json</code>.</p>
+                </div>
+            </header>
+
+            <div class="panel-box">
+                <form id="settings-form" novalidate>
+                    <div class="field">
+                        <label id="mode-group-label">Translation mode</label>
+                        <div class="mode-selector" role="radiogroup" aria-labelledby="mode-group-label">
+                            <button type="button" class="mode-btn" role="radio" aria-checked="true" data-mode="openai">
+                                OpenAI Compatible Endpoint
+                            </button>
+                            <button type="button" class="mode-btn" role="radio" aria-checked="false" data-mode="claude">
+                                Claude Compatible Endpoint
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mode-section active" id="section-openai">
+                        <div class="field">
+                            <label for="openai-url">OpenAI-compatible base URL</label>
+                            <input type="url" id="openai-url" placeholder="https://api.deepseek.com" spellcheck="false" />
+                            <span class="field-hint">Works with DeepSeek (<code>https://api.deepseek.com</code>), OpenAI (<code>https://api.openai.com/v1</code>), OpenRouter, or Groq.</span>
+                        </div>
+                        <div class="field">
+                            <label for="openai-model">Model ID</label>
+                            <input type="text" id="openai-model" placeholder="deepseek-chat" spellcheck="false" />
+                        </div>
+                        <div class="field">
+                            <label for="openai-key">API key</label>
+                            <div class="input-group">
+                                <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off" spellcheck="false" />
+                                <button type="button" class="btn-secondary" id="toggle-openai-key" aria-pressed="false" aria-controls="openai-key">Show</button>
+                            </div>
+                            <span class="field-hint">Leave blank when saving if you want to keep the existing saved key.</span>
+                        </div>
+                    </div>
+
+                    <div class="mode-section" id="section-claude">
+                        <div class="field">
+                            <label for="claude-url">Claude-compatible base URL</label>
+                            <input type="url" id="claude-url" placeholder="https://api.anthropic.com" spellcheck="false" />
+                            <span class="field-hint">Sends requests to <code>/v1/messages</code> with Anthropic headers.</span>
+                        </div>
+                        <div class="field">
+                            <label for="claude-model">Model ID</label>
+                            <input type="text" id="claude-model" placeholder="claude-3-5-sonnet-latest" spellcheck="false" />
+                        </div>
+                        <div class="field">
+                            <label for="claude-key">Claude API key</label>
+                            <div class="input-group">
+                                <input type="password" id="claude-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+                                <button type="button" class="btn-secondary" id="toggle-claude-key" aria-pressed="false" aria-controls="claude-key">Show</button>
+                            </div>
+                            <span class="field-hint">Leave blank when saving if you want to keep the existing saved key.</span>
+                        </div>
+                    </div>
+
+                    <div class="action-row">
+                        <button type="submit" class="btn-primary" id="save-btn">Save settings</button>
+                        <button type="button" class="btn-secondary" id="test-btn">Verify connection</button>
+                    </div>
+                </form>
+
+                <div id="settings-status-box" class="status-banner" role="status" aria-live="polite" data-state="loading">
+                    [LOADING] Reading local configuration...
+                </div>
+            </div>
+        </section>
+    </main>
+</div>

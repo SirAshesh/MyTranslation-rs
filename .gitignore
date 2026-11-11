@@ -1,6 +1,7 @@
 .env
 .env.*
 *.env
+config.json
 target/
 **/target/
 Cargo.lock
@@ -9,5 +10,7 @@ __pycache__/
 dummy/
 local/cache/
 models/
+sample/
+*.mp4
 *.png
 *.webp

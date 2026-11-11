@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build & Package (Windows x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Windows Release
+        shell: pwsh
+        run: |
+          $distDir = "staging/ImageTrans-rs"
+          New-Item -ItemType Directory -Force -Path "$distDir/fonts" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$distDir/models" | Out-Null
+
+          Copy-Item "target/release/server-rs.exe" "$distDir/"
+          Copy-Item "target/release/DirectML.dll" "$distDir/"
+          Copy-Item "fonts/*" "$distDir/fonts/" -Recurse
+          Copy-Item "config.example.json" "$distDir/"
+          Copy-Item "README.md" "$distDir/"
+
+          $models = @(
+            @{
+              url = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/det/en_PP-OCRv3_det_mobile.onnx"
+              name = "en_PP-OCRv3_det_mobile.onnx"
+            },
+            @{
+              url = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx"
+              name = "en_PP-OCRv4_rec_mobile.onnx"
+            },
+            @{
+              url = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+              name = "ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+            },
+            @{
+              url = "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/paddle/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile/en_dict.txt"
+              name = "en_dict.txt"
+            }
+          )
+
+          foreach ($m in $models) {
+            $dest = "$distDir/models/$($m.name)"
+            Write-Host "Downloading $($m.name)..."
+            Invoke-WebRequest -Uri $m.url -OutFile $dest -UseBasicParsing
+          }
+
+          Compress-Archive -Path "$distDir" -DestinationPath "ImageTrans-rs-windows-x64.zip" -CompressionLevel Optimal
+          Write-Host "Successfully packaged ImageTrans-rs-windows-x64.zip"
+
+      - name: Resolve Release Tag
+        id: resolve_tag
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME) {
+            $tag = $env:GITHUB_REF_NAME
+          } elseif ('${{ inputs.version }}') {
+            $tag = '${{ inputs.version }}'
+          } else {
+            $tag = 'v0.1.0'
+          }
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve_tag.outputs.tag }}
+          name: ImageTrans-rs ${{ steps.resolve_tag.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: ImageTrans-rs-windows-x64.zip
+          generate_release_notes: true

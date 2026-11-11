@@ -1,4 +1,4 @@
-use crate::models::OcrLineItem;
+use crate::model::OcrLineItem;
 use image::RgbImage;
 use rapidocr_core::config::ExecutionProvider;
 use rapidocr_core::model::{ModelCache, ModelDownloadMode, PPOCRV4_EN_MOBILE};
@@ -31,15 +31,22 @@ impl OcrManager {
             det.box_thresh = 0.55;
             det.unclip_ratio = 1.50;
         }
-        cfg.inference.execution_provider = ExecutionProvider::DirectMl;
+        #[cfg(target_os = "windows")]
+        {
+            cfg.inference.execution_provider = ExecutionProvider::DirectMl;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            cfg.inference.execution_provider = ExecutionProvider::Cpu;
+        }
 
         let ocr = match RapidOcr::new(cfg.clone()) {
             Ok(engine) => {
-                info!("Native Rust RapidOCR initialized with DirectML GPU acceleration.");
+                info!("Native Rust RapidOCR initialized with GPU/default acceleration.");
                 engine
             }
             Err(_) => {
-                info!("DirectML unavailable, falling back to Native Rust CPU OCR.");
+                info!("Primary provider unavailable, falling back to Native Rust CPU OCR.");
                 cfg.inference.execution_provider = ExecutionProvider::Cpu;
                 RapidOcr::new(cfg).map_err(|e| format!("Failed to initialize Native OCR: {}", e))?
             }

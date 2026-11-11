@@ -1,4 +1,4 @@
-use crate::models::Bubble;
+use crate::model::Bubble;
 use ab_glyph::{Font, FontArc, PxScale, PxScaleFont, ScaleFont};
 use image::{Rgb, RgbImage};
 use std::collections::HashMap;

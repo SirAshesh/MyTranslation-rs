@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct TranslateForm {
     #[serde(default)]
     pub src: String,
@@ -20,11 +21,11 @@ pub struct TranslateForm {
     pub callback: Option<String>,
 }
 
-fn default_source_lang() -> String {
+pub fn default_source_lang() -> String {
     "en".to_string()
 }
 
-fn default_target_lang() -> String {
+pub fn default_target_lang() -> String {
     "id".to_string()
 }
 
@@ -117,16 +118,6 @@ pub struct BatchResponse {
     pub total: usize,
     pub elapsed_sec: f64,
     pub results: Vec<TranslateResponse>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OcrDaemonResponse {
-    pub success: bool,
-    pub width: u32,
-    pub height: u32,
-    pub elapsed_sec: Option<f64>,
-    #[serde(default)]
-    pub lines: Vec<OcrLineItem>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

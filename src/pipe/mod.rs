@@ -1,9 +1,17 @@
-use crate::clustering::cluster_lines;
-use crate::inpainting::clean_image_text;
-use crate::models::{BoxItem, Geometry, ImgMap};
-use crate::ocr::OcrManager;
-use crate::renderer::ComicRenderer;
-use crate::translator::Translator;
+pub mod clustering;
+pub mod inpainting;
+pub mod llm_client;
+pub mod ocr;
+pub mod renderer;
+pub mod translator;
+
+pub use clustering::cluster_lines;
+pub use inpainting::clean_image_text;
+pub use ocr::OcrManager;
+pub use renderer::ComicRenderer;
+pub use translator::Translator;
+
+use crate::model::{BoxItem, Geometry, ImgMap};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use image::{ImageFormat, RgbImage};

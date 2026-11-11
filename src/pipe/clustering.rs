@@ -1,4 +1,4 @@
-use crate::models::{Bubble, LineInfo, OcrLineItem};
+use crate::model::{Bubble, LineInfo, OcrLineItem};
 use regex::Regex;
 use std::collections::HashSet;
 

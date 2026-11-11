@@ -1,89 +1,66 @@
-# ImageTrans-rs: High-Performance ImageTrans Server in Rust
+# MyTranslation-rs
 
-A standalone ImageTrans server implementation written in pure Rust. Built specifically for high-speed, natural comic, manga, and manhwa scanlation.
+A native Rust translation and typesetting server for manga, manhwa, and comic pages. It runs RapidOCR on Windows DirectML for text detection and recognition, cleans speech bubbles at the stroke level while keeping screentones intact, typesets translated lines with `comic_bold.ttf`, and translates dialogue through OpenAI-compatible endpoints (DeepSeek, OpenAI, OpenRouter) or Claude-compatible endpoints.
 
----
+## Architecture
 
-## Key Features
+- Runs as a single compiled Rust binary (`server-rs.exe`) with no Python runtime, PyTorch installation, or background helper daemons.
+- Executes PP-OCRv4 mobile detection and recognition models on GPU through ONNX Runtime and `DirectML.dll`.
+- Samples local bubble backgrounds and dilates text stroke masks before rendering wrapped text with a 1px outline.
 
-1. **Sub-Second to Real-Time Translation**:
-   - Offers optional sub-second offline translation using MarianMT (`LOCAL_TRANSLATION=true`), completing page translations in under 1 second.
-   - Or connect to cloud DeepSeek V3 (`LOCAL_TRANSLATION=false`) for nuanced, full-context localization.
-2. **Stroke-Masked Speech Bubble Inpainting**:
-   - Zero ugly white boxes and zero cut-off speech bubble borders.
-   - Two-tier inpainting scans the entire bubble envelope and individual line bounds, sampling local background colors and dilating text masks by 2 to 3 pixels.
-   - Erases 100% of raw source text while keeping round and spiky speech bubble borders crisp and intact.
-3. **Professional Comic Typography**:
-   - Uses comic lettering (`fonts/comic_bold.ttf`) with dynamic font size fitting, automatic word wrapping, vertical and horizontal centering, and subtle 1px white stroke outlines for high legibility on any background.
-4. **Bulk and Batch Processing**:
-   - Built-in `POST /batch` endpoint with parallel execution via the Tokio async runtime, capable of translating multi-page chapters in seconds.
-5. **Full ImageTrans Chrome Extension Compatibility**:
-   - Supports `src`, `sourceLang`, `targetLang`, `withoutImage`, `type=html`, and `callback` (JSONP) form data parameters.
+## Quick Start (Prebuilt Release)
 
----
+1. Download `ImageTrans-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/ImageTrans-rs/releases) page.
+2. Extract the archive to a local folder.
+3. Run `server-rs.exe`.
+4. Open `http://127.0.0.1:5000` in your browser.
+5. In **Settings**, choose your preferred translation mode, enter your API key or endpoint, and click **Save settings**.
+6. Point the ImageTrans browser extension to `http://127.0.0.1:5000`.
 
-## Getting Started
+## Sample
 
-### 1. Configure `.env`
-Create or edit `.env`:
-```env
-# Set to true to use local MarianMT offline model (sub-second translation)
-# Set to false to use DeepSeek V3 cloud API
-LOCAL_TRANSLATION=true
+<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video>
 
-# Required only if LOCAL_TRANSLATION=false
-DEEPSEEK_API=your_deepseek_api_key_here
+## Configuration
 
-PORT=5000
+Settings live in `config.json` in the working directory:
+
+```json
+{
+  "port": 5000,
+  "translation_mode": "openai",
+  "openai_base_url": "https://api.deepseek.com",
+  "openai_model": "deepseek-chat",
+  "deepseek_api_key": "sk-your-key-here",
+  "claude_base_url": "https://api.anthropic.com",
+  "claude_model": "claude-3-5-sonnet-latest",
+  "claude_api_key": ""
+}
 ```
 
-### 2. Run the Server
-From the repository root:
+The listening port is managed in `config.json`. Translation backend settings can be updated either through the web interface or by directly editing `config.json`.
 
+## Connecting the ImageTrans Browser Extension
+
+1. In Chrome, right-click the **ImageTrans** extension icon and open **Options**.
+2. Set **Translation Mode** to `ImageTrans (local or remote server)`.
+3. Enter `http://127.0.0.1:5000` in the **Server URL** field and click **Save**.
+4. Click **Check** to confirm `/list` returns `[{"name":"MyTranslation","displayName":"default","running":false}]`.
+
+## Building from Source
+
+### Prerequisites
+- [Rust toolchain](https://rustup.rs/) (1.75 or newer)
+- Windows 10/11 x64 with DirectX 12 support
+
+### Build Commands
 ```bash
-# Release mode (recommended for maximum performance)
-cargo run --release
+git clone https://github.com/SirAshesh/ImageTrans-rs.git
+cd ImageTrans-rs
+cargo build --release
 ```
 
-Or run the compiled release binary directly:
-```bash
-./target/release/server-rs.exe
-```
+The release build places `server-rs.exe` and `DirectML.dll` in `target/release/`.
 
-The server automatically launches the required daemons:
-- RapidOCR daemon (`ocr_daemon.py` on port 51055)
-- MarianMT daemon (`local/marian_daemon.py` on port 51056, if `LOCAL_TRANSLATION=true`)
-
----
-
-## Interactive Local CLI
-
-You can also test MarianMT translation speed directly in the terminal:
-
-```bash
-python local/cli.py
-```
-
----
-
-## Connecting with the ImageTrans Chrome Extension
-
-1. In Chrome, right-click the **ImageTrans** extension icon and select **Options**.
-2. Under **Translation Mode**, choose:
-   `ImageTrans (local or remote server)`
-3. In the **Server URL** input, enter:
-   `http://localhost:5000` (or `http://127.0.0.1:5000`)
-4. Click **Save**.
-5. Click **Check** to verify connectivity (it opens `http://localhost:5000/list` showing `[{"name":"Server-rs", ...}]`).
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Input Format | Description |
-| :--- | :--- | :--- | :--- |
-| `GET /list` | GET | None | Server discovery endpoint for ImageTrans extensions |
-| `POST /translate` | POST | Form data or JSON | Full-page image translation with inpainting and rendering |
-| `POST /translateRegion` | POST | Form data | Single bubble or rectangular region translation |
-| `POST /batch` | POST | JSON `{"images": ["data:image/..."]}` | High-speed parallel batch translation for multiple pages |
-| `GET /stats` | GET | None | Processed image statistics and uptime |
+## License
+MIT License.

@@ -1,4 +1,4 @@
-use crate::models::Bubble;
+use crate::model::Bubble;
 use image::{Rgb, RgbImage};
 
 pub fn clean_image_text(img: &mut RgbImage, bubbles: &[Bubble]) {
