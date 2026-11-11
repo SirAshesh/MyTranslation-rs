@@ -33,7 +33,8 @@ impl ComicRenderer {
             let box_w = b.w.max(40.0);
             let box_h = b.h.max(25.0);
 
-            let safe_w = (box_w * 1.20).max(65.0);
+            let safe_w = (box_w * 1.25).max(70.0);
+            let safe_h = (box_h * 1.25).max(35.0);
 
             let words: Vec<&str> = target_text.split_whitespace().collect();
             if words.is_empty() {
@@ -41,7 +42,7 @@ impl ComicRenderer {
             }
 
             let candidate_sizes = [
-                24.0, 22.0, 20.0, 18.0, 16.5, 15.0, 14.0, 13.0, 12.0, 11.0, 10.5, 10.0, 9.5, 9.0, 8.5, 8.0,
+                28.0, 26.0, 24.0, 22.0, 20.0, 18.0, 16.5, 15.0, 14.0, 13.0, 12.0, 11.0, 10.5, 10.0, 9.5, 9.0, 8.5, 8.0,
             ];
 
             let mut best_size = 9.0;
@@ -81,7 +82,7 @@ impl ComicRenderer {
                     .map(|l| self.measure_line_width(&scaled_font, l))
                     .fold(0.0_f32, f32::max);
 
-                if total_h <= box_h * 1.08 && max_w <= safe_w * 1.05 {
+                if total_h <= safe_h && max_w <= safe_w * 1.08 {
                     best_size = size;
                     best_lines = lines;
                     break;
@@ -89,7 +90,7 @@ impl ComicRenderer {
             }
 
             if best_lines.is_empty() {
-                best_size = 8.0;
+                best_size = 8.5;
                 let scale = PxScale::from(best_size);
                 let scaled_font = self.font.as_scaled(scale);
                 let mut lines = Vec::new();
@@ -123,11 +124,11 @@ impl ComicRenderer {
             let total_h = (best_lines.len() as f32) * line_height;
 
             let mut start_y = center_y - total_h / 2.0;
-            if start_y < b.y1 - 3.0 {
-                start_y = b.y1 - 3.0;
+            if start_y < b.y1 - 6.0 {
+                start_y = b.y1 - 6.0;
             }
-            if start_y + total_h > b.y2 + 4.0 {
-                start_y = (b.y2 + 4.0 - total_h).max(b.y1 - 3.0);
+            if start_y + total_h > b.y2 + 8.0 {
+                start_y = (b.y2 + 8.0 - total_h).max(b.y1 - 6.0);
             }
 
             for (idx, line) in best_lines.iter().enumerate() {

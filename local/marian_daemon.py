@@ -3,8 +3,10 @@ import json
 import os
 import warnings
 import logging
+import re
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import wordninja
 
 warnings.filterwarnings("ignore")
 logging.getLogger("transformers").setLevel(logging.ERROR)
@@ -33,6 +35,32 @@ with torch.inference_mode():
 
 print(f"[Marian Daemon] Model ready. Starting HTTP server on port {PORT}...", flush=True)
 
+def preprocess_text(text: str) -> str:
+    tokens = text.split()
+    fixed_tokens = []
+    for token in tokens:
+        m = re.match(r'^([^\w]*)([\w\'-]+)([^\w]*)$', token)
+        if not m:
+            fixed_tokens.append(token)
+            continue
+        prefix, word, suffix = m.groups()
+        if len(word) >= 4 and word.isupper():
+            parts = wordninja.split(word)
+            if len(parts) > 1 and all(len(p) >= 1 for p in parts):
+                fixed_tokens.append(prefix + ' '.join(parts) + suffix)
+            else:
+                fixed_tokens.append(token)
+        else:
+            fixed_tokens.append(token)
+    cleaned = ' '.join(fixed_tokens)
+    s = cleaned.strip()
+    if s.isupper():
+        s = s.lower()
+        s = re.sub(r'(?:^|[.!?]\s+)([a-z])', lambda m: m.group(0).upper(), s)
+        s = re.sub(r'\bi\b', 'I', s)
+        s = re.sub(r"\bi'", "I'", s)
+    return s
+
 class MarianHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
@@ -58,7 +86,7 @@ class MarianHandler(BaseHTTPRequestHandler):
                     self.wfile.write(b'{"translations":[]}')
                     return
 
-                texts = [item.get("text", "") for item in items]
+                texts = [preprocess_text(item.get("text", "")) for item in items]
                 inputs = tokenizer(texts, return_tensors="pt", padding=True)
                 with torch.inference_mode():
                     output_ids = model.generate(**inputs, max_new_tokens=60, num_beams=1)
