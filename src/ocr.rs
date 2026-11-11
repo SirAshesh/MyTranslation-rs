@@ -26,10 +26,10 @@ impl OcrManager {
 
         let mut cfg = cache.config_for(&PPOCRV4_EN_MOBILE);
         cfg.pipeline.use_cls = false;
-        cfg.text_score = 0.32;
+        cfg.text_score = 0.40;
         if let Some(ref mut det) = cfg.det {
-            det.box_thresh = 0.42;
-            det.unclip_ratio = 1.7;
+            det.box_thresh = 0.48;
+            det.unclip_ratio = 1.65;
         }
         cfg.inference.execution_provider = ExecutionProvider::DirectMl;
 

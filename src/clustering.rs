@@ -9,10 +9,11 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
     let mut lines = Vec::new();
     for item in ocr_lines {
         let text = item.text.trim().to_string();
-        if text.is_empty() || item.score < 0.32 {
+        if text.is_empty() {
             continue;
         }
 
+        let is_pure_digits = text.chars().all(|c| c.is_ascii_digit());
         let xs: Vec<f32> = item.r#box.iter().map(|p| p[0]).collect();
         let ys: Vec<f32> = item.r#box.iter().map(|p| p[1]).collect();
 
@@ -20,6 +21,22 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
         let max_x = xs.iter().cloned().fold(f32::NEG_INFINITY, f32::max).min(img_width as f32);
         let min_y = ys.iter().cloned().fold(f32::INFINITY, f32::min).max(0.0);
         let max_y = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max).min(img_height as f32);
+
+        if is_pure_digits && (min_y > (img_height as f32 - 70.0) || max_y < 50.0) {
+            continue;
+        }
+
+        if text.len() <= 2 && is_pure_digits {
+            continue;
+        }
+
+        if text.len() == 1 && item.score < 0.85 && text != "I" && text != "A" && text != "!" && text != "?" {
+            continue;
+        }
+
+        if item.score < 0.38 {
+            continue;
+        }
 
         let w = (max_x - min_x).max(1.0);
         let h = (max_y - min_y).max(1.0);
