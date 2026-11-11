@@ -1,10 +1,12 @@
 mod clustering;
 mod deepseek;
 mod inpainting;
+mod marian;
 mod models;
 mod ocr;
 mod pipeline;
 mod renderer;
+mod translator;
 
 use axum::extract::{Form, Json, State};
 use axum::http::{header, Method, StatusCode};
@@ -28,10 +30,12 @@ use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::{error, info, Level};
 use tracing_subscriber::FmtSubscriber;
+use translator::Translator;
 
 struct AppState {
     pipeline: Pipeline,
     total_processed: AtomicUsize,
+    engine_name: String,
 }
 
 #[tokio::main]
@@ -45,9 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::path::Path::new("Server-rs/.env").exists() {
         let _ = dotenvy::from_path("Server-rs/.env");
     }
-
-    let deepseek_api_key = std::env::var("DEEPSEEK_API")
-        .expect("DEEPSEEK_API environment variable must be set in .env");
 
     let port: u16 = std::env::var("PORT")
         .ok()
@@ -69,12 +70,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ocr_mgr.ensure_started().await?;
     let ocr = Arc::new(Mutex::new(ocr_mgr));
 
-    let deepseek = deepseek::DeepSeekClient::new(deepseek_api_key);
-    let pipeline = Pipeline::new(ocr, deepseek, renderer);
+    let local_trans = std::env::var("LOCAL_TRANSLATION")
+        .unwrap_or_default()
+        .to_lowercase();
+    let use_local = local_trans == "true" || local_trans == "1";
+
+    let (translator, engine_name) = if use_local {
+        info!("Using local MarianMT offline translation engine...");
+        let marian_port = 51056;
+        let mut marian_mgr = marian::MarianManager::new(marian_port);
+        marian_mgr.ensure_started().await?;
+        (
+            Translator::Marian(Arc::new(Mutex::new(marian_mgr))),
+            "RapidOCR + MarianMT Local + Rust Inpainting".to_string(),
+        )
+    } else {
+        info!("Using cloud DeepSeek V3 translation engine...");
+        let deepseek_api_key = std::env::var("DEEPSEEK_API")
+            .expect("DEEPSEEK_API environment variable must be set in .env when LOCAL_TRANSLATION is false");
+        let client = deepseek::DeepSeekClient::new(deepseek_api_key);
+        (
+            Translator::DeepSeek(client),
+            "RapidOCR + DeepSeek V3 + Rust Inpainting".to_string(),
+        )
+    };
+
+    let pipeline = Pipeline::new(ocr, translator, renderer);
 
     let state = Arc::new(AppState {
         pipeline,
         total_processed: AtomicUsize::new(0),
+        engine_name,
     });
 
     let cors = CorsLayer::new()
@@ -247,7 +273,7 @@ async fn translate_region_handler(
                 region_map: RegionMapData {
                     source: source_text,
                     target: vec![TargetEngine {
-                        engine: "deepseek".to_string(),
+                        engine: "default".to_string(),
                         text: target_text,
                     }],
                 },
@@ -342,7 +368,7 @@ async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::V
         "server": "Server-rs",
         "version": "1.0.0",
         "total_images_processed": count,
-        "engine": "RapidOCR + DeepSeek V3 + Rust Inpainting"
+        "engine": state.engine_name
     }))
 }
 

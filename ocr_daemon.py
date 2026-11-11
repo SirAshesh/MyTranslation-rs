@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Lightweight high-performance OCR daemon for Server-rs.
-Listens on 127.0.0.1:51055.
-Keeps RapidOCR model warmed up in memory for sub-second OCR responses.
-"""
 import io
 import sys
 import json
@@ -11,17 +5,15 @@ import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from rapidocr_onnxruntime import RapidOCR
 from PIL import Image
+import numpy as np
 
 PORT = 51055
 print(f"[OCR Daemon] Initializing RapidOCR model...", flush=True)
 engine = RapidOCR()
-# Optimize text detector for high-res manga/comic scans
 for op in engine.text_detector.preprocess_op:
     if hasattr(op, 'limit_side_len'):
         op.limit_side_len = 1200
 
-# Warmup run on dummy empty image
-import numpy as np
 dummy_arr = np.zeros((100, 100, 3), dtype=np.uint8)
 engine(dummy_arr)
 print(f"[OCR Daemon] Model ready and warmed up. Starting HTTP server on port {PORT}...", flush=True)
@@ -57,7 +49,7 @@ class OCRHandler(BaseHTTPRequestHandler):
                 lines = []
                 if ocr_results:
                     for item in ocr_results:
-                        pts = item[0] # [[x1,y1], [x2,y1], [x2,y2], [x1,y2]]
+                        pts = item[0]
                         text = str(item[1]).strip()
                         score = float(item[2])
                         lines.append({
@@ -91,7 +83,6 @@ class OCRHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # Concise logging
         sys.stderr.write(f"[OCR Daemon] {args[0]} {args[1]} -> {args[2]}\n")
 
 def run():

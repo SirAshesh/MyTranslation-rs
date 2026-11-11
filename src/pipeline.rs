@@ -1,9 +1,9 @@
 use crate::clustering::cluster_lines;
-use crate::deepseek::DeepSeekClient;
 use crate::inpainting::clean_image_text;
 use crate::models::{BoxItem, Geometry, ImgMap};
 use crate::ocr::OcrManager;
 use crate::renderer::ComicRenderer;
+use crate::translator::Translator;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use image::{ImageFormat, RgbImage};
@@ -14,19 +14,19 @@ use tracing::info;
 
 pub struct Pipeline {
     pub ocr: Arc<Mutex<OcrManager>>,
-    pub deepseek: DeepSeekClient,
+    pub translator: Translator,
     pub renderer: Arc<ComicRenderer>,
 }
 
 impl Pipeline {
     pub fn new(
         ocr: Arc<Mutex<OcrManager>>,
-        deepseek: DeepSeekClient,
+        translator: Translator,
         renderer: Arc<ComicRenderer>,
     ) -> Self {
         Self {
             ocr,
-            deepseek,
+            translator,
             renderer,
         }
     }
@@ -61,12 +61,12 @@ impl Pipeline {
             return Ok((None, ImgMap { boxes: Vec::new() }));
         }
 
-        let t_ds = std::time::Instant::now();
+        let t_tr = std::time::Instant::now();
         let translations = self
-            .deepseek
+            .translator
             .translate_bubbles(&bubbles, source_lang, target_lang)
             .await?;
-        info!("DeepSeek translated {} bubbles in {:?}", translations.len(), t_ds.elapsed());
+        info!("Translated {} bubbles in {:?}", translations.len(), t_tr.elapsed());
 
         let base64_image = if !without_image {
             let t_render = std::time::Instant::now();

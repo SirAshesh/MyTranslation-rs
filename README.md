@@ -6,21 +6,18 @@ A standalone ImageTrans server implementation written in pure Rust. Built specif
 
 ## Key Features
 
-1. **Sub-3-Second Performance**:
-   - The entire local processing pipeline (decoding, OCR, speech bubble clustering, inpainting, and font typesetting) finishes in approximately 0.8 to 1.1 seconds on CPU.
-   - Total turnaround time per high-resolution comic page (including DeepSeek V3 API response) is typically 2.2 to 2.9 seconds.
+1. **Sub-Second to Real-Time Translation**:
+   - Offers optional sub-second offline translation using MarianMT (`LOCAL_TRANSLATION=true`), completing page translations in under 1 second.
+   - Or connect to cloud DeepSeek V3 (`LOCAL_TRANSLATION=false`) for nuanced, full-context localization.
 2. **Stroke-Masked Speech Bubble Inpainting**:
    - Zero ugly white boxes and zero cut-off speech bubble borders.
    - Two-tier inpainting scans the entire bubble envelope and individual line bounds, sampling local background colors and dilating text masks by 2 to 3 pixels.
    - Erases 100% of raw source text while keeping round and spiky speech bubble borders crisp and intact.
-3. **Natural Localization with DeepSeek V3**:
-   - Groups text lines into speech bubbles using horizontal center alignment and vertical proximity rules.
-   - Comic dialogue is sent to DeepSeek V3 with dedicated scanlation guidelines (natural spoken dialogue, concise phrasing, and zero repetitive phrasing).
-4. **Professional Comic Typography**:
+3. **Professional Comic Typography**:
    - Uses comic lettering (`fonts/comic_bold.ttf`) with dynamic font size fitting, automatic word wrapping, vertical and horizontal centering, and subtle 1px white stroke outlines for high legibility on any background.
-5. **Bulk and Batch Processing**:
+4. **Bulk and Batch Processing**:
    - Built-in `POST /batch` endpoint with parallel execution via the Tokio async runtime, capable of translating multi-page chapters in seconds.
-6. **Full ImageTrans Chrome Extension Compatibility**:
+5. **Full ImageTrans Chrome Extension Compatibility**:
    - Supports `src`, `sourceLang`, `targetLang`, `withoutImage`, `type=html`, and `callback` (JSONP) form data parameters.
 
 ---
@@ -30,7 +27,13 @@ A standalone ImageTrans server implementation written in pure Rust. Built specif
 ### 1. Configure `.env`
 Create or edit `.env`:
 ```env
+# Set to true to use local MarianMT offline model (sub-second translation)
+# Set to false to use DeepSeek V3 cloud API
+LOCAL_TRANSLATION=true
+
+# Required only if LOCAL_TRANSLATION=false
 DEEPSEEK_API=your_deepseek_api_key_here
+
 PORT=5000
 ```
 
@@ -47,7 +50,19 @@ Or run the compiled release binary directly:
 ./target/release/server-rs.exe
 ```
 
-The server automatically launches the internal RapidOCR daemon (`ocr_daemon.py`) and listens on port 5000.
+The server automatically launches the required daemons:
+- RapidOCR daemon (`ocr_daemon.py` on port 51055)
+- MarianMT daemon (`local/marian_daemon.py` on port 51056, if `LOCAL_TRANSLATION=true`)
+
+---
+
+## Interactive Local CLI
+
+You can also test MarianMT translation speed directly in the terminal:
+
+```bash
+python local/cli.py
+```
 
 ---
 

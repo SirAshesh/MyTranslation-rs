@@ -51,7 +51,6 @@ for i, b in enumerate(boxes[:6]):
     print(f"  EN: {b.get('text')}")
     print(f"  ID: {b.get('target')}")
 
-# Save the translated image
 if data.get("img"):
     out_bytes = base64.b64decode(data["img"])
     out_file = "Server-rs/dummy/translated_test1.webp"
