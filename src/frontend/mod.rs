@@ -3,6 +3,7 @@ pub fn render_dashboard_html() -> String {
     let comp_css = include_str!("components.css");
     let body_html = include_str!("index.html");
     let app_js = include_str!("app.js");
+    let local_js = include_str!("local.js");
 
     format!(
         r#"<!DOCTYPE html>
@@ -20,9 +21,10 @@ pub fn render_dashboard_html() -> String {
 {}
     <script>
 {}
+{}
     </script>
 </body>
 </html>"#,
-        base_css, comp_css, body_html, app_js
+        base_css, comp_css, body_html, app_js, local_js
     )
 }

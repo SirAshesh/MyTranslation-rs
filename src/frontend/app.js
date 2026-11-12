@@ -9,7 +9,8 @@ const viewPanels = {
 const modeButtons = Array.from(document.querySelectorAll(".mode-btn"));
 const modeSections = {
     openai: document.getElementById("section-openai"),
-    claude: document.getElementById("section-claude")
+    claude: document.getElementById("section-claude"),
+    local: document.getElementById("section-local")
 };
 
 let activeMode = "openai";
@@ -40,6 +41,9 @@ const claudeUrlInput = document.getElementById("claude-url");
 const claudeModelInput = document.getElementById("claude-model");
 const claudeKeyInput = document.getElementById("claude-key");
 const toggleClaudeKeyBtn = document.getElementById("toggle-claude-key");
+
+let savedLocalModel = "Q6_K";
+const localModelSelect = document.getElementById("local-model");
 
 const settingsForm = document.getElementById("settings-form");
 const saveBtn = document.getElementById("save-btn");
@@ -98,8 +102,13 @@ function selectMode(mode) {
         btn.setAttribute("aria-checked", isMatch ? "true" : "false");
     });
     Object.keys(modeSections).forEach((k) => {
-        modeSections[k].classList.toggle("active", k === mode);
+        if (modeSections[k]) {
+            modeSections[k].classList.toggle("active", k === mode);
+        }
     });
+    if (mode === "local" && typeof pollLocalStatus === "function") {
+        pollLocalStatus();
+    }
 }
 
 modeButtons.forEach((btn) => {
@@ -157,6 +166,7 @@ copyUrlBtn.addEventListener("click", async () => {
 
 function formatModeName(mode) {
     if (mode === "claude") return "Claude Compatible Endpoint";
+    if (mode === "local") return "Local Model (LFM / GGUF)";
     return "OpenAI Compatible Endpoint";
 }
 
@@ -190,7 +200,7 @@ async function loadRuntimeState(announce) {
         statPages.textContent = String(st.total_processed ?? 0);
 
         let mode = s.translation_mode || "openai";
-        if (mode !== "claude" && mode !== "openai") {
+        if (mode !== "claude" && mode !== "openai" && mode !== "local") {
             mode = "openai";
         }
         selectMode(mode);
@@ -204,10 +214,21 @@ async function loadRuntimeState(announce) {
         claudeModelInput.value = s.claude_model || "claude-3-5-sonnet-latest";
         claudeKeyInput.placeholder = s.claude_key_configured ? "Saved (" + s.claude_masked_key + ")" : "Enter sk-ant-...";
 
+        if (s.local_model) {
+            savedLocalModel = s.local_model;
+            if (localModelSelect) {
+                localModelSelect.value = s.local_model;
+            }
+        }
+
         if (mode === "claude") {
             activeModelName = s.claude_model || "claude-3-5-sonnet-latest";
             statModel.textContent = activeModelName;
             statKey.textContent = s.claude_key_configured ? s.claude_masked_key : "Not set";
+        } else if (mode === "local") {
+            activeModelName = "LiquidAI LFM3 1.7B (" + (s.local_model || "Q6_K") + ")";
+            statModel.textContent = activeModelName;
+            statKey.textContent = "Offline (Local)";
         } else {
             activeModelName = s.openai_model || "deepseek-chat";
             statModel.textContent = activeModelName;
@@ -221,7 +242,9 @@ async function loadRuntimeState(announce) {
                 setBanner(settingsStatusBox, "ok", "READY", readyText);
             }
         } else {
-            const emptyText = "Active mode (" + formatModeName(mode) + ") has no API key saved in config.json. Configure it in Settings.";
+            const emptyText = mode === "local"
+                ? "Local model server is stopped. Click Download & start in the Local Model tab."
+                : "Active mode (" + formatModeName(mode) + ") has no API key saved in config.json. Configure it in Settings.";
             setBanner(homeStatusBox, "warn", "EMPTY", emptyText);
             if (settingsStatusBox.getAttribute("data-state") === "loading") {
                 setBanner(settingsStatusBox, "warn", "EMPTY", emptyText);
@@ -251,7 +274,8 @@ settingsForm.addEventListener("submit", async (e) => {
         deepseek_api_key: openaiKeyInput.value.trim(),
         claude_base_url: claudeUrlInput.value.trim(),
         claude_model: claudeModelInput.value.trim(),
-        claude_api_key: claudeKeyInput.value.trim()
+        claude_api_key: claudeKeyInput.value.trim(),
+        local_model: localModelSelect ? localModelSelect.value : savedLocalModel
     };
 
     try {
@@ -289,7 +313,8 @@ testBtn.addEventListener("click", async () => {
         api_key: openaiKeyInput.value.trim(),
         claude_base_url: claudeUrlInput.value.trim(),
         claude_model: claudeModelInput.value.trim(),
-        claude_api_key: claudeKeyInput.value.trim()
+        claude_api_key: claudeKeyInput.value.trim(),
+        local_model: localModelSelect ? localModelSelect.value : savedLocalModel
     };
 
     try {
@@ -389,30 +414,15 @@ pgForm.addEventListener("submit", async (e) => {
         if (boxes.length === 0) {
             pgBoxesTbody.innerHTML = '<tr><td colspan="4" class="mono" style="color:var(--muted);">[EMPTY] No speech bubbles detected on this image.</td></tr>';
         } else {
-            pgBoxesTbody.innerHTML = "";
-            boxes.forEach((b, idx) => {
-                const tr = document.createElement("tr");
-                const tdIdx = document.createElement("td");
-                tdIdx.className = "mono";
-                tdIdx.textContent = String(idx + 1);
-
-                const tdSrc = document.createElement("td");
-                tdSrc.textContent = b.text || "";
-
-                const tdTgt = document.createElement("td");
-                tdTgt.textContent = b.target || "";
-
-                const tdGeo = document.createElement("td");
-                tdGeo.className = "mono";
+            pgBoxesTbody.innerHTML = boxes.map((b, idx) => {
                 const g = b.geometry || { X: 0, Y: 0, width: 0, height: 0 };
-                tdGeo.textContent = g.X + ", " + g.Y + ", " + g.width + "x" + g.height;
-
-                tr.appendChild(tdIdx);
-                tr.appendChild(tdSrc);
-                tr.appendChild(tdTgt);
-                tr.appendChild(tdGeo);
-                pgBoxesTbody.appendChild(tr);
-            });
+                return `<tr>
+                    <td class="mono">${idx + 1}</td>
+                    <td>${escapeHtml(b.text || "")}</td>
+                    <td>${escapeHtml(b.target || "")}</td>
+                    <td class="mono">${g.X}, ${g.Y}, ${g.width}x${g.height}</td>
+                </tr>`;
+            }).join("");
         }
 
         setBanner(pgStatusBox, "ok", "DONE", "Translated " + boxes.length + " dialogue box(es) in " + elapsedMs + " ms.");
@@ -424,6 +434,10 @@ pgForm.addEventListener("submit", async (e) => {
         pgRunBtn.textContent = "Run translation";
     }
 });
+
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+}
 
 chatClearBtn.addEventListener("click", () => {
     chatStream.innerHTML = `
@@ -459,52 +473,34 @@ chatForm.addEventListener("submit", async (e) => {
     const srcLang = chatSrcLang.value;
     const tgtLang = chatTgtLang.value;
     const timeStr = formatClock();
+    const replyId = "reply-" + Date.now();
 
-    const userRow = document.createElement("div");
-    userRow.className = "chat-row outgoing";
-    const userBubble = document.createElement("div");
-    userBubble.className = "chat-bubble bubble-outgoing";
-
-    const userMeta = document.createElement("div");
-    userMeta.className = "bubble-meta";
-    userMeta.textContent = "You \u2022 " + timeStr;
-
-    const userBody = document.createElement("div");
-    userBody.className = "bubble-body";
-    userBody.textContent = text;
-
-    userBubble.appendChild(userMeta);
-    userBubble.appendChild(userBody);
-    userRow.appendChild(userBubble);
-    chatStream.appendChild(userRow);
+    chatStream.insertAdjacentHTML("beforeend", `
+        <div class="chat-row outgoing">
+            <div class="chat-bubble bubble-outgoing">
+                <div class="bubble-meta">You &bull; ${timeStr}</div>
+                <div class="bubble-body">${escapeHtml(text)}</div>
+            </div>
+        </div>
+        <div class="chat-row incoming" id="${replyId}">
+            <div class="chat-bubble bubble-incoming">
+                <div class="bubble-meta">
+                    <span>MyTranslation (${escapeHtml(activeModelName)})</span>
+                    <span class="bubble-time">${timeStr}</span>
+                </div>
+                <div class="bubble-body">[TRANSLATING] Processing dialogue with ${escapeHtml(activeModelName)}...</div>
+            </div>
+        </div>
+    `);
 
     chatInput.value = "";
     chatSendBtn.disabled = true;
     chatSendBtn.textContent = "Translating...";
-
-    const serverRow = document.createElement("div");
-    serverRow.className = "chat-row incoming";
-    const serverBubble = document.createElement("div");
-    serverBubble.className = "chat-bubble bubble-incoming";
-
-    const serverMeta = document.createElement("div");
-    serverMeta.className = "bubble-meta";
-    const serverTitle = document.createElement("span");
-    serverTitle.textContent = "MyTranslation (" + activeModelName + ")";
-    const serverTime = document.createElement("span");
-    serverTime.textContent = timeStr;
-    serverMeta.appendChild(serverTitle);
-    serverMeta.appendChild(serverTime);
-
-    const serverBody = document.createElement("div");
-    serverBody.className = "bubble-body";
-    serverBody.textContent = "[TRANSLATING] Processing dialogue with " + activeModelName + "...";
-
-    serverBubble.appendChild(serverMeta);
-    serverBubble.appendChild(serverBody);
-    serverRow.appendChild(serverBubble);
-    chatStream.appendChild(serverRow);
     chatStream.scrollTop = chatStream.scrollHeight;
+
+    const replyRow = document.getElementById(replyId);
+    const replyBody = replyRow ? replyRow.querySelector(".bubble-body") : null;
+    const replyTime = replyRow ? replyRow.querySelector(".bubble-time") : null;
 
     try {
         const res = await fetch("/api/translate/text", {
@@ -517,9 +513,9 @@ chatForm.addEventListener("submit", async (e) => {
             })
         });
         const data = await res.json();
-        if (data.success) {
-            serverBody.textContent = data.target || "";
-            serverTime.textContent = data.elapsed_ms + " ms \u2022 " + formatClock();
+        if (data.success && replyBody) {
+            replyBody.textContent = data.target || "";
+            if (replyTime) replyTime.textContent = data.elapsed_ms + " ms \u2022 " + formatClock();
 
             const actions = document.createElement("div");
             actions.className = "bubble-actions";
@@ -531,20 +527,20 @@ chatForm.addEventListener("submit", async (e) => {
                 try {
                     await navigator.clipboard.writeText(data.target || "");
                     copyBtn.textContent = "Copied";
-                    setTimeout(() => {
-                        copyBtn.textContent = "Copy text";
-                    }, 1500);
+                    setTimeout(() => { copyBtn.textContent = "Copy text"; }, 1500);
                 } catch (_) {}
             });
             actions.appendChild(copyBtn);
-            serverBubble.appendChild(actions);
-        } else {
-            serverBody.textContent = "[ERROR] " + (data.message || "Translation failed.");
-            serverBody.style.color = "var(--err-text)";
+            replyRow.querySelector(".chat-bubble").appendChild(actions);
+        } else if (replyBody) {
+            replyBody.textContent = "[ERROR] " + (data.message || "Translation failed.");
+            replyBody.style.color = "var(--err-text)";
         }
     } catch (err) {
-        serverBody.textContent = "[ERROR] Network error during translation: " + err.message;
-        serverBody.style.color = "var(--err-text)";
+        if (replyBody) {
+            replyBody.textContent = "[ERROR] Network error during translation: " + err.message;
+            replyBody.style.color = "var(--err-text)";
+        }
     } finally {
         chatSendBtn.disabled = false;
         chatSendBtn.textContent = "Send";

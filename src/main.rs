@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
-use tracing::{info, Level};
+use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 fn load_config() -> (AppConfig, String) {
@@ -77,7 +77,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ocr_mgr = OcrManager::new(51055)?;
     let ocr = Arc::new(Mutex::new(ocr_mgr));
 
-    let translator = Translator::new(cfg);
+    let local_data_dir = std::path::Path::new(&config_path)
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new(""))
+        .join("local");
+    let translator = Translator::new(cfg, local_data_dir);
     if translator.is_active_configured().await {
         info!("MyTranslation translator initialized with configured mode.");
     } else {
@@ -85,6 +89,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Notice: Active translation mode is not configured. Open http://127.0.0.1:{} to configure.",
             port
         );
+    }
+
+    let startup_cfg = translator.get_config().await;
+    let model_installed = translator
+        .runtime
+        .status()
+        .await
+        .installed_quants
+        .contains(&startup_cfg.local_model);
+    if startup_cfg.translation_mode == "local" && model_installed {
+        if let Err(message) = translator.runtime.start(&startup_cfg.local_model).await {
+            warn!("Local model auto-start skipped: {}", message);
+        }
     }
 
     let pipeline = Pipeline::new(ocr, translator, renderer);
@@ -114,6 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/api/settings",
             get(get_settings_handler).post(save_settings_handler),
         )
+        .route("/api/hardware", get(hardware_handler))
+        .route("/api/local/status", get(local_status_handler))
+        .route("/api/local/start", post(local_start_handler))
+        .route("/api/local/stop", post(local_stop_handler))
         .route("/api/test-key", post(test_key_handler))
         .route("/api/translate/text", post(translate_text_handler))
         .route("/list", get(list_handler))
@@ -124,13 +145,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/stats", get(stats_handler))
         .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(cors)
-        .with_state(state);
+        .with_state(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("MyTranslation listening on http://127.0.0.1:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                warn!("Failed to listen for the shutdown signal: {}", err);
+            }
+        })
+        .await?;
+    state.pipeline.translator.runtime.stop().await;
 
     Ok(())
 }

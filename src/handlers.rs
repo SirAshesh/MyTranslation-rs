@@ -1,10 +1,10 @@
-use axum::extract::{Form, Json, State};
+use axum::extract::{Form, Json, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use crate::frontend::render_dashboard_html;
 use crate::model::*;
 use crate::pipe::Pipeline;
-use crate::utilities::{extract_image_bytes, mask_secret};
+use crate::utilities::{extract_image_bytes, get_hardware_info, mask_secret};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -19,25 +19,34 @@ pub async fn dashboard_handler() -> Html<String> {
     Html(render_dashboard_html())
 }
 
+fn build_settings_response(
+    cfg: AppConfig,
+    active_configured: bool,
+    success: bool,
+    message: String,
+) -> SettingsResponse {
+    SettingsResponse {
+        success,
+        message,
+        port: cfg.port,
+        translation_mode: cfg.translation_mode,
+        openai_key_configured: !cfg.deepseek_api_key.trim().is_empty(),
+        openai_masked_key: mask_secret(&cfg.deepseek_api_key),
+        openai_base_url: cfg.openai_base_url,
+        openai_model: cfg.openai_model,
+        claude_key_configured: !cfg.claude_api_key.trim().is_empty(),
+        claude_masked_key: mask_secret(&cfg.claude_api_key),
+        claude_base_url: cfg.claude_base_url,
+        claude_model: cfg.claude_model,
+        local_model: cfg.local_model,
+        active_configured,
+    }
+}
+
 pub async fn get_settings_handler(State(state): State<Arc<AppState>>) -> Json<SettingsResponse> {
     let cfg = state.pipeline.translator.get_config().await;
     let active_configured = state.pipeline.translator.is_active_configured().await;
-
-    Json(SettingsResponse {
-        success: true,
-        message: "Settings loaded.".to_string(),
-        port: cfg.port,
-        translation_mode: cfg.translation_mode,
-        openai_base_url: cfg.openai_base_url,
-        openai_model: cfg.openai_model,
-        openai_key_configured: !cfg.deepseek_api_key.trim().is_empty(),
-        openai_masked_key: mask_secret(&cfg.deepseek_api_key),
-        claude_base_url: cfg.claude_base_url,
-        claude_model: cfg.claude_model,
-        claude_key_configured: !cfg.claude_api_key.trim().is_empty(),
-        claude_masked_key: mask_secret(&cfg.claude_api_key),
-        active_configured,
-    })
+    Json(build_settings_response(cfg, active_configured, true, "Settings loaded.".to_string()))
 }
 
 pub async fn save_settings_handler(
@@ -47,47 +56,54 @@ pub async fn save_settings_handler(
     let updated_cfg = state.pipeline.translator.apply_settings(&form).await;
     let active_configured = state.pipeline.translator.is_active_configured().await;
 
-    let save_res = serde_json::to_string_pretty(&updated_cfg)
+    let write_result = serde_json::to_string_pretty(&updated_cfg)
         .map_err(|e| e.to_string())
-        .and_then(|json_str| {
-            std::fs::write(&state.config_path, json_str).map_err(|e| e.to_string())
-        });
+        .and_then(|json_str| std::fs::write(&state.config_path, json_str).map_err(|e| e.to_string()));
 
-    match save_res {
-        Ok(_) => Json(SettingsResponse {
-            success: true,
-            message: format!(
-                "Saved settings to config.json. Active mode: {}.",
-                updated_cfg.translation_mode
-            ),
-            port: updated_cfg.port,
-            translation_mode: updated_cfg.translation_mode,
-            openai_base_url: updated_cfg.openai_base_url,
-            openai_model: updated_cfg.openai_model,
-            openai_key_configured: !updated_cfg.deepseek_api_key.trim().is_empty(),
-            openai_masked_key: mask_secret(&updated_cfg.deepseek_api_key),
-            claude_base_url: updated_cfg.claude_base_url,
-            claude_model: updated_cfg.claude_model,
-            claude_key_configured: !updated_cfg.claude_api_key.trim().is_empty(),
-            claude_masked_key: mask_secret(&updated_cfg.claude_api_key),
-            active_configured,
-        }),
-        Err(e) => Json(SettingsResponse {
-            success: false,
-            message: format!("Failed to write config.json: {}", e),
-            port: updated_cfg.port,
-            translation_mode: updated_cfg.translation_mode,
-            openai_base_url: updated_cfg.openai_base_url,
-            openai_model: updated_cfg.openai_model,
-            openai_key_configured: !updated_cfg.deepseek_api_key.trim().is_empty(),
-            openai_masked_key: mask_secret(&updated_cfg.deepseek_api_key),
-            claude_base_url: updated_cfg.claude_base_url,
-            claude_model: updated_cfg.claude_model,
-            claude_key_configured: !updated_cfg.claude_api_key.trim().is_empty(),
-            claude_masked_key: mask_secret(&updated_cfg.claude_api_key),
-            active_configured,
-        }),
+    let (success, message) = match write_result {
+        Ok(()) => (
+            true,
+            format!("Saved settings to config.json. Active mode: {}.", updated_cfg.translation_mode),
+        ),
+        Err(e) => (false, format!("Failed to write config.json: {}", e)),
+    };
+    Json(build_settings_response(updated_cfg, active_configured, success, message))
+}
+
+pub async fn hardware_handler(Query(query): Query<HardwareQuery>) -> Response {
+    match tokio::task::spawn_blocking(move || get_hardware_info(query.refresh)).await {
+        Ok(info) => Json(info).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"success": false, "message": format!("Hardware detection failed: {}", e)})),
+        )
+            .into_response(),
     }
+}
+
+pub async fn local_status_handler(State(state): State<Arc<AppState>>) -> Json<LocalStatusResponse> {
+    Json(state.pipeline.translator.runtime.status().await)
+}
+
+pub async fn local_start_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LocalStartRequest>,
+) -> Response {
+    let runtime = &state.pipeline.translator.runtime;
+    match runtime.start(&req.quant).await {
+        Ok(()) => Json(runtime.status().await).into_response(),
+        Err(message) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"success": false, "message": message})),
+        )
+            .into_response(),
+    }
+}
+
+pub async fn local_stop_handler(State(state): State<Arc<AppState>>) -> Json<LocalStatusResponse> {
+    let runtime = &state.pipeline.translator.runtime;
+    runtime.stop().await;
+    Json(runtime.status().await)
 }
 
 pub async fn test_key_handler(

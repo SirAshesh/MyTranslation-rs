@@ -271,3 +271,69 @@ a {
         max-width: 100%;
     }
 }
+
+.local-hardware {
+    font-size: 0.8125rem;
+    color: var(--muted);
+    background-color: var(--surface-alt);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+.local-hardware strong {
+    color: var(--text);
+    font-weight: 600;
+}
+.local-runtime {
+    background-color: var(--surface-alt);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 14px;
+    margin-top: 16px;
+    margin-bottom: 16px;
+}
+.progress-track {
+    width: 100%;
+    height: 8px;
+    background-color: var(--rule);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 12px;
+}
+.progress-fill {
+    width: 0%;
+    height: 100%;
+    background-color: #3b82f6;
+    border-radius: 4px;
+    transition: width 0.2s ease;
+}
+.local-status {
+    font-size: 0.8125rem;
+    margin-bottom: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.local-status::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--muted);
+}
+.local-status[data-phase="running"]::before {
+    background-color: var(--ok-text);
+}
+.local-status[data-phase="downloading_model"]::before,
+.local-status[data-phase="installing_engine"]::before,
+.local-status[data-phase="starting"]::before {
+    background-color: var(--warn-text);
+}
+.local-status[data-phase="failed"]::before {
+    background-color: var(--err-text);
+}
+}

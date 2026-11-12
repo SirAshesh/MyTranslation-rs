@@ -1,66 +1,113 @@
 # MyTranslation-rs
+A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device LLMs (LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
 
-A native Rust translation and typesetting server for manga, manhwa, and comic pages. It runs RapidOCR on Windows DirectML for text detection and recognition, cleans speech bubbles at the stroke level while keeping screentones intact, typesets translated lines with `comic_bold.ttf`, and translates dialogue through OpenAI-compatible endpoints (DeepSeek, OpenAI, OpenRouter) or Claude-compatible endpoints.
 
-## Architecture
-
-- Runs as a single compiled Rust binary (`server-rs.exe`) with no Python runtime, PyTorch installation, or background helper daemons.
-- Executes PP-OCRv4 mobile detection and recognition models on GPU through ONNX Runtime and `DirectML.dll`.
-- Samples local bubble backgrounds and dilates text stroke masks before rendering wrapped text with a 1px outline.
-
-## Quick Start (Prebuilt Release)
-
-1. Download `ImageTrans-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/ImageTrans-rs/releases) page.
-2. Extract the archive to a local folder.
-3. Run `server-rs.exe`.
-4. Open `http://127.0.0.1:5000` in your browser.
-5. In **Settings**, choose your preferred translation mode, enter your API key or endpoint, and click **Save settings**.
-6. Point the ImageTrans browser extension to `http://127.0.0.1:5000`.
+## Key Features
+- **Cross-Platform**: Runs natively on both **Windows 10/11 (x64)** and **Linux / Ubuntu (x64)**.
+- **Single Standalone Binary**: No Python environment, PyTorch, or heavy runtime dependencies required.
+- **Multilingual Support**: Supports horizontal comics (LTR) and vertical Japanese manga (tategaki, RTL) with automatic line joining and junk/SFX filtering.
+- **Flexible Translation Backends**:
+  - **Local Model**: 1-click built-in download and execution of LiquidAI LFM3 1.7B with automatic GPU detection (NVIDIA CUDA, AMD/Intel Vulkan, or CPU).
+  - **Cloud APIs**: OpenAI-compatible (DeepSeek, OpenAI, OpenRouter) and Claude-compatible endpoints.
+- **ImageTrans Extension Ready**: Direct compatibility with the ImageTrans Chrome/Firefox browser extension.
 
 ## Sample
 
-<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video> or [Click Here](./sample/Sample.mp4)
+<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video>
+
+[Sample.mp4](./sample/Sample.mp4)
+
+---
+
+## Quick Start (Prebuilt Release)
+
+### Windows (x64)
+
+1. Download `ImageTrans-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
+2. Extract the archive into a folder.
+3. Run `server-rs.exe`.
+4. Open your browser at `http://127.0.0.1:5000`.
+
+### Linux / Ubuntu (x64)
+
+You can install, update, and run the server using the single-line automated runner:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/SirAshesh/MyTranslation-rs/main/run.sh -o run.sh
+chmod +x run.sh
+./run.sh
+```
+
+The script automatically detects updates from GitHub Releases, downloads missing binaries/models, and launches the server.
+
+Alternatively, for manual installation:
+1. Download `ImageTrans-rs-ubuntu-x64.tar.gz` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
+2. Extract the archive:
+   ```bash
+   tar -xzf ImageTrans-rs-ubuntu-x64.tar.gz
+   cd ImageTrans-rs
+   chmod +x server-rs run.sh
+   ./server-rs
+   ```
+3. Open `http://127.0.0.1:5000` in your browser.
+
 
 ## Configuration
 
-Settings live in `config.json` in the working directory:
+Settings are saved in `config.json` in the application directory:
 
 ```json
 {
   "port": 5000,
-  "translation_mode": "openai",
+  "translation_mode": "local",
   "openai_base_url": "https://api.deepseek.com",
   "openai_model": "deepseek-chat",
   "deepseek_api_key": "sk-your-key-here",
   "claude_base_url": "https://api.anthropic.com",
   "claude_model": "claude-3-5-sonnet-latest",
-  "claude_api_key": ""
+  "claude_api_key": "",
+  "local_model": "Q6_K"
 }
 ```
 
-The listening port is managed in `config.json`. Translation backend settings can be updated either through the web interface or by directly editing `config.json`.
+- **Web Dashboard**: Navigate to `http://127.0.0.1:5000` to adjust settings, check detected GPU hardware, and download local models directly from the UI.
+- **Port**: Customize the listening port by modifying `"port"` in `config.json` or passing `PORT=5000 ./server-rs`.
 
 ## Connecting the ImageTrans Browser Extension
 
-1. In Chrome, right-click the **ImageTrans** extension icon and open **Options**.
-2. Set **Translation Mode** to `ImageTrans (local or remote server)`.
-3. Enter `http://127.0.0.1:5000` in the **Server URL** field and click **Save**.
-4. Click **Check** to confirm `/list` returns `[{"name":"MyTranslation","displayName":"default","running":false}]`.
+1. In Chrome/Brave/Edge, open the **ImageTrans** extension options.
+2. Under **Translation Mode**, select `ImageTrans (local or remote server)`.
+3. Set the **Server URL** to:
+   ```
+   http://127.0.0.1:5000
+   ```
+4. Click **Check** to verify connectivity (returns `[{"name":"MyTranslation","displayName":"default","running":false}]`).
+5. Save your settings. Now you can capture and translate manga pages directly in your browser.
+
 
 ## Building from Source
 
 ### Prerequisites
-- [Rust toolchain](https://rustup.rs/) (1.75 or newer)
-- Windows 10/11 x64 with DirectX 12 support
+
+- [Rust Toolchain](https://rustup.rs/) (1.75 or newer)
+- **Windows**: Windows 10/11 x64, DirectX 12 compatible GPU for DirectML acceleration.
+- **Ubuntu / Debian**:
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y build-essential libssl-dev pkg-config
+  ```
 
 ### Build Commands
+
 ```bash
-git clone https://github.com/SirAshesh/ImageTrans-rs.git
-cd ImageTrans-rs
+git clone https://github.com/SirAshesh/MyTranslation-rs.git
+cd MyTranslation-rs
 cargo build --release
 ```
 
-The release build places `server-rs.exe` and `DirectML.dll` in `target/release/`.
+- **Windows binary**: `target/release/server-rs.exe` (requires `DirectML.dll` from the target folder).
+- **Linux binary**: `target/release/server-rs`.
 
 ## License
+
 MIT License.

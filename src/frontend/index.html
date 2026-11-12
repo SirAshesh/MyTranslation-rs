@@ -266,6 +266,9 @@
                             <button type="button" class="mode-btn" role="radio" aria-checked="false" data-mode="claude">
                                 Claude Compatible Endpoint
                             </button>
+                            <button type="button" class="mode-btn" role="radio" aria-checked="false" data-mode="local">
+                                Local Model
+                            </button>
                         </div>
                     </div>
 
@@ -306,6 +309,25 @@
                                 <button type="button" class="btn-secondary" id="toggle-claude-key" aria-pressed="false" aria-controls="claude-key">Show</button>
                             </div>
                             <span class="field-hint">Leave blank when saving if you want to keep the existing saved key.</span>
+                        </div>
+                    </div>
+
+                    <div class="mode-section" id="section-local">
+                        <p class="local-hardware" id="local-hardware">Detecting hardware...</p>
+                        <div class="field">
+                            <label for="local-model">Model</label>
+                            <select id="local-model"></select>
+                            <span class="field-hint">LiquidAI LFM3 1.7B from Hugging Face. The model and the inference engine are downloaded automatically.</span>
+                        </div>
+                        <div class="local-runtime">
+                            <div class="progress-track" id="local-progress" hidden>
+                                <div class="progress-fill" id="local-progress-fill"></div>
+                            </div>
+                            <p class="local-status" id="local-status" data-phase="stopped">Stopped</p>
+                            <div class="action-row">
+                                <button type="button" class="btn-primary" id="local-start-btn">Download &amp; start</button>
+                                <button type="button" class="btn-secondary" id="local-stop-btn" disabled>Stop</button>
+                            </div>
                         </div>
                     </div>
 

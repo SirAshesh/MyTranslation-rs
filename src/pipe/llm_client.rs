@@ -1,4 +1,4 @@
-use crate::model::{AppConfig, Bubble};
+use crate::model::{local_server_url, AppConfig, Bubble};
 use crate::utilities::{resolve_claude_url, resolve_openai_url};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -8,6 +8,16 @@ use std::time::Duration;
 #[derive(Clone)]
 pub struct LlmClient {
     client: Client,
+}
+
+struct ChatEndpoint {
+    label: &'static str,
+    url: String,
+    api_key: Option<String>,
+    model: String,
+    system_prompt: &'static str,
+    temperature: f32,
+    unreachable_hint: &'static str,
 }
 
 #[derive(Serialize)]
@@ -43,7 +53,7 @@ struct ChatChoice {
 
 #[derive(Deserialize)]
 struct ChatResponseMessage {
-    content: String,
+    content: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -77,25 +87,25 @@ struct TranslationItem {
 }
 
 fn scanlation_system_prompt() -> &'static str {
-    r#"Kamu adalah penerjemah komik / manga profesional kelas atas (scanlator profesional).
-Tugasmu menerjemahkan teks dialog komik berbahasa Inggris ke Bahasa Indonesia yang SANGAT ALAMI, luwes, ekspresif, dan sesuai konteks percakapan komik.
+    r#"You are a professional comic and manga scanlation translator.
+Your task is to translate comic dialogue into natural, fluent, and expressive Indonesian suited for conversational comic panels.
 
-ATURAN DAN STANDAR KUALITAS SCANLATION:
-1. RINGKAS DAN PAS DI BALON KOMIK: Ruang balon komik sangat terbatas. Terjemahkan secara padat dan tidak bertele-tele tanpa memotong makna.
-2. HINDARI PENGULANGAN KATA / REDUNDANSI: Jangan mengulang subjek atau objek yang sama dalam 1 balon. (Contoh scanlation alami: "...sebelum kamu minum ramuan itu, kamu sempat bilang kalau nggak begitu ngefek ke penyihir.").
-3. GAYA BAHASA ALAMI: Gunakan bahasa percakapan komik modern yang santai dan luwes (aku/kamu, udah, nggak/ngga, gimana, kayak, kok, sih, dong, ya). Jangan gunakan bahasa baku kaku ala buku sekolah atau terjemahan mesin harfiah.
-4. KOREKSI KATA MENEMPEL / TANPA SPASI DARI OCR:
-   Teks input bahasa Inggris berasal dari OCR manga yang sering menghilangkan spasi antar kata karena font yang rapat.
-   - "anda love potion" / "alovepotion" -> maksudnya "and a love potion" / "a love potion" -> Terjemahkan: "dan ramuan cinta..." / "ramuan cinta." (JANGAN terjemahkan "anda" sebagai "kamu"!).
-   - "imiss you" -> maksudnya "I miss you" -> Terjemahkan: "aku kangen kamu".
-   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Nama karakter adalah "Harij-san" (atau Tuan Harij).
-   - "ICAN'TEVEN", "ITWASALL ANILLUSION", "IFSIRHARIJ", "ISTILLVIVIDLY", "THATOCCURRED" -> Pisahkan kata-katanya dan pahami maknanya dengan benar.
-   PASTIKAN PADA HASIL TERJEMAHAN BAHASA INDONESIA SEMUA KATA TERPISAH DENGAN SPASI YANG TEPAT DAN TIDAK ADA KATA YANG MENEMPEL!
-5. UNGKAPAN UMUM KOMIK:
-   - "Excuse me?" / "Excuse me!" adalah ungkapan sopan ("Permisi?") atau reaksi kaget/tersinggung ("Apa katamu?!" / "Maksudmu?!"). JANGAN PERNAH terjemahkan menjadi "Alasan me".
-6. PERTAHANKAN TANDA BACA EMOSI: Pertahankan tanda elipsis (...), tanda tanya (?), tanda seru (!), dan nuansa ekspresi karakter.
+SCANLATION QUALITY STANDARDS:
+1. CONCISE & FIT FOR SPEECH BUBBLES: Comic bubble space is strictly limited. Keep translations punchy and compact without omitting essential meaning.
+2. AVOID REDUNDANCY: Do not repeat identical subjects or objects within the same speech bubble.
+3. NATURAL CONVERSATIONAL TONE: Use modern, natural Indonesian comic dialogue (aku/kamu, udah, nggak, gimana, kayak, kok, sih, dong, ya). Avoid stiff, formal textbook language or literal machine translation.
+4. FIX OCR MERGED WORDS:
+   Input text originates from comic OCR which frequently drops spaces due to tight lettering.
+   - "anda love potion" / "alovepotion" -> means "and a love potion" / "a love potion" -> Translate as "dan ramuan cinta..." / "ramuan cinta" (NEVER translate "anda" as the pronoun "you").
+   - "imiss you" -> means "I miss you" -> Translate as "aku kangen kamu".
+   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Character name is "Harij-san" (or Tuan Harij).
+   - "ICAN'TEVEN", "ITWASALL ANILLUSION", "IFSIRHARIJ", "ISTILLVIVIDLY", "THATOCCURRED" -> Separate words cleanly and understand their meaning accurately.
+   ENSURE ALL WORDS IN INDONESIAN ARE PROPERLY SEPARATED BY SPACES WITH NO MERGED WORDS!
+5. COMMON IDIOMATIC EXPRESSIONS:
+   - "Excuse me?" / "Excuse me!" is a polite query ("Permisi?") or an affronted reaction ("Apa katamu?!" / "Maksudmu?!"). NEVER translate literally as "Alasan me".
+6. PRESERVE EMOTIONAL PUNCTUATION: Maintain ellipsis (...), question marks (?), exclamation marks (!), and character expressiveness.
 
-FORMAT OUTPUT WAJIB BERUPA JSON OBJECT dengan kunci 'translations':
+OUTPUT FORMAT MUST BE A VALID JSON OBJECT WITH A 'translations' KEY:
 {
   "translations": [
     {"id": 1, "target": "Tapi kupikir dia udah dapet apa yang dia pesan?"},
@@ -104,9 +114,82 @@ FORMAT OUTPUT WAJIB BERUPA JSON OBJECT dengan kunci 'translations':
 }"#
 }
 
+fn local_scanlation_system_prompt() -> &'static str {
+    r#"You are an expert manga and comic scanlation translator translating dialogue into natural Indonesian.
+Task: Translate comic dialogue into fluent, expressive Indonesian that understands honorifics and social hierarchy.
+
+HONORIFIC & SCANLATION RULES:
+1. HONORIFICS & FORMS OF ADDRESS:
+   - Preserve Japanese honorific suffixes (-san, -kun, -chan, -sama, -senpai, -sensei) if they are part of character identity (e.g., "Harij-san", "Karin-chan", "Senpai").
+   - Alternatively, adapt naturally to social hierarchy: "Tuan [Nama]" (for nobles/masters), "Nona [Nama]", "Kak [Nama]".
+   - "Excuse me?" / "Excuse me!" -> "Permisi?" or shock reaction "Maksudmu apa?!" (NEVER translate as "Alasan me").
+2. NATURAL COMIC REGISTER:
+   - Close peers/friends: Use "aku/kamu" and casual conversational words (udah, nggak, gimana, kok, sih, dong, ya).
+   - Avoid stiff, formal textbook phrasing ("Saya/Anda" ONLY when speaking to nobles, royalty, or high officials).
+3. FIX OCR MERGED TEXT:
+   - Separate concatenated OCR words (e.g., "anda love potion" means "and a love potion" -> "dan ramuan cinta", NOT the pronoun "anda").
+4. CONCISE & PANEL-FITTING:
+   - Keep dialogue concise and punchy to fit neatly inside speech bubbles.
+5. REQUIRED JSON OUTPUT FORMAT:
+{
+  "translations": [
+    {"id": 1, "target": "Natural Indonesian translation"}
+  ]
+}"#
+}
+
+fn build_translation_user_prompt(bubbles: &[Bubble]) -> String {
+    let input_items: Vec<serde_json::Value> = bubbles
+        .iter()
+        .map(|b| serde_json::json!({ "id": b.id, "text": b.source_text }))
+        .collect();
+
+    format!(
+        "Translate the following comic dialogue items into natural Indonesian:\n{}",
+        serde_json::to_string_pretty(&input_items).unwrap_or_default()
+    )
+}
+
+fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
+    if cfg.translation_mode == "local" {
+        return Ok(ChatEndpoint {
+            label: "Local model server",
+            url: resolve_openai_url(&local_server_url()),
+            api_key: None,
+            model: cfg.local_model.trim().to_string(),
+            system_prompt: local_scanlation_system_prompt(),
+            temperature: 0.1,
+            unreachable_hint: " Start the model from Settings > Local Model first.",
+        });
+    }
+
+    let api_key = cfg.deepseek_api_key.trim();
+    if api_key.is_empty() {
+        return Err("OpenAI-compatible API key is not configured. Open Settings in the web interface to add your key.".to_string());
+    }
+    let model = cfg.openai_model.trim();
+
+    Ok(ChatEndpoint {
+        label: "OpenAI-compatible endpoint",
+        url: resolve_openai_url(&cfg.openai_base_url),
+        api_key: Some(api_key.to_string()),
+        model: if model.is_empty() { "deepseek-chat" } else { model }.to_string(),
+        system_prompt: scanlation_system_prompt(),
+        temperature: 0.3,
+        unreachable_hint: "",
+    })
+}
+
+fn strip_reasoning_block(raw_content: &str) -> &str {
+    match raw_content.rfind("</think>") {
+        Some(end) => &raw_content[end + "</think>".len()..],
+        None => raw_content,
+    }
+}
+
 fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
     let mut translation_map = HashMap::new();
-    let trimmed = raw_content
+    let trimmed = strip_reasoning_block(raw_content)
         .trim()
         .trim_start_matches("```json")
         .trim_start_matches("```")
@@ -129,10 +212,8 @@ fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
 
     if let Ok(obj) = serde_json::from_str::<HashMap<String, serde_json::Value>>(trimmed) {
         for (k, v) in obj {
-            if let Ok(id) = k.parse::<usize>() {
-                if let Some(s) = v.as_str() {
-                    translation_map.insert(id, s.to_string());
-                }
+            if let (Ok(id), Some(s)) = (k.parse::<usize>(), v.as_str()) {
+                translation_map.insert(id, s.to_string());
             }
         }
     }
@@ -143,27 +224,46 @@ fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
 impl LlmClient {
     pub fn new() -> Self {
         let client = Client::builder()
-            .timeout(Duration::from_secs(45))
+            .timeout(Duration::from_secs(90))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self { client }
     }
 
-    pub async fn test_connection_openai(&self, cfg: &AppConfig) -> Result<String, String> {
-        let key = cfg.deepseek_api_key.trim();
-        if key.is_empty() {
-            return Err("OpenAI API key is empty.".to_string());
+    async fn send_chat(
+        &self,
+        endpoint: &ChatEndpoint,
+        request: &OpenAiChatRequest,
+    ) -> Result<OpenAiChatResponse, String> {
+        let mut builder = self
+            .client
+            .post(&endpoint.url)
+            .header("Content-Type", "application/json")
+            .json(request);
+        if let Some(api_key) = &endpoint.api_key {
+            builder = builder.header("Authorization", format!("Bearer {}", api_key));
         }
 
-        let url = resolve_openai_url(&cfg.openai_base_url);
-        let model = if cfg.openai_model.trim().is_empty() {
-            "deepseek-chat".to_string()
-        } else {
-            cfg.openai_model.trim().to_string()
-        };
+        let response = builder.send().await.map_err(|e| {
+            format!("{} request failed: {}.{}", endpoint.label, e, endpoint.unreachable_hint)
+        })?;
 
-        let req_body = OpenAiChatRequest {
-            model: model.clone(),
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("{} returned HTTP {}: {}", endpoint.label, status, body));
+        }
+
+        response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse {} response: {}", endpoint.label, e))
+    }
+
+    pub async fn test_connection_chat(&self, cfg: &AppConfig) -> Result<String, String> {
+        let endpoint = resolve_chat_endpoint(cfg)?;
+        let request = OpenAiChatRequest {
+            model: endpoint.model.clone(),
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: "ping".to_string(),
@@ -173,23 +273,43 @@ impl LlmClient {
             response_format: None,
         };
 
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", key))
-            .header("Content-Type", "application/json")
-            .json(&req_body)
-            .send()
-            .await
-            .map_err(|e| format!("Network error: {}", e))?;
+        self.send_chat(&endpoint, &request).await?;
+        Ok(format!("Connected to {} (model: {}).", endpoint.url, endpoint.model))
+    }
 
-        if resp.status().is_success() {
-            Ok(format!("Connected to {} (model: {}).", url, model))
-        } else {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            Err(format!("Endpoint returned HTTP {}: {}", status, body))
-        }
+    pub async fn translate_chat(
+        &self,
+        cfg: &AppConfig,
+        bubbles: &[Bubble],
+    ) -> Result<HashMap<usize, String>, String> {
+        let endpoint = resolve_chat_endpoint(cfg)?;
+        let request = OpenAiChatRequest {
+            model: endpoint.model.clone(),
+            messages: vec![
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: endpoint.system_prompt.to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: build_translation_user_prompt(bubbles),
+                },
+            ],
+            temperature: endpoint.temperature,
+            max_tokens: 2048,
+            response_format: Some(ResponseFormat {
+                r#type: "json_object".to_string(),
+            }),
+        };
+
+        let chat_response = self.send_chat(&endpoint, &request).await?;
+        let raw_content = chat_response
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.as_deref())
+            .unwrap_or_default();
+
+        Ok(parse_translation_json(raw_content))
     }
 
     pub async fn test_connection_claude(&self, cfg: &AppConfig) -> Result<String, String> {
@@ -236,81 +356,6 @@ impl LlmClient {
         }
     }
 
-    pub async fn translate_openai(
-        &self,
-        cfg: &AppConfig,
-        bubbles: &[Bubble],
-    ) -> Result<HashMap<usize, String>, String> {
-        if cfg.deepseek_api_key.trim().is_empty() {
-            return Err("OpenAI-compatible API key is not configured. Open Settings in the web interface to add your key.".to_string());
-        }
-
-        let input_items: Vec<serde_json::Value> = bubbles
-            .iter()
-            .map(|b| serde_json::json!({ "id": b.id, "text": b.source_text }))
-            .collect();
-
-        let user_prompt = format!(
-            "Terjemahkan dialog-dialog komik berikut ke Bahasa Indonesia alami:\n{}",
-            serde_json::to_string_pretty(&input_items).unwrap_or_default()
-        );
-
-        let url = resolve_openai_url(&cfg.openai_base_url);
-        let model = if cfg.openai_model.trim().is_empty() {
-            "deepseek-chat".to_string()
-        } else {
-            cfg.openai_model.trim().to_string()
-        };
-
-        let req_body = OpenAiChatRequest {
-            model,
-            messages: vec![
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: scanlation_system_prompt().to_string(),
-                },
-                ChatMessage {
-                    role: "user".to_string(),
-                    content: user_prompt,
-                },
-            ],
-            temperature: 0.3,
-            max_tokens: 2048,
-            response_format: Some(ResponseFormat {
-                r#type: "json_object".to_string(),
-            }),
-        };
-
-        let resp = self
-            .client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", cfg.deepseek_api_key.trim()))
-            .header("Content-Type", "application/json")
-            .json(&req_body)
-            .send()
-            .await
-            .map_err(|e| format!("OpenAI-compatible request error: {}", e))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Endpoint returned HTTP {}: {}", status, body));
-        }
-
-        let chat_res: OpenAiChatResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse response JSON: {}", e))?;
-
-        let raw_content = chat_res
-            .choices
-            .first()
-            .map(|c| c.message.content.clone())
-            .unwrap_or_default();
-
-        Ok(parse_translation_json(&raw_content))
-    }
-
     pub async fn translate_claude(
         &self,
         cfg: &AppConfig,
@@ -319,16 +364,6 @@ impl LlmClient {
         if cfg.claude_api_key.trim().is_empty() {
             return Err("Claude API key is not configured. Open Settings in the web interface to add your key.".to_string());
         }
-
-        let input_items: Vec<serde_json::Value> = bubbles
-            .iter()
-            .map(|b| serde_json::json!({ "id": b.id, "text": b.source_text }))
-            .collect();
-
-        let user_prompt = format!(
-            "Terjemahkan dialog-dialog komik berikut ke Bahasa Indonesia alami:\n{}",
-            serde_json::to_string_pretty(&input_items).unwrap_or_default()
-        );
 
         let url = resolve_claude_url(&cfg.claude_base_url);
         let model = if cfg.claude_model.trim().is_empty() {
@@ -343,7 +378,7 @@ impl LlmClient {
             system: scanlation_system_prompt().to_string(),
             messages: vec![ChatMessage {
                 role: "user".to_string(),
-                content: user_prompt,
+                content: build_translation_user_prompt(bubbles),
             }],
             temperature: 0.3,
         };
@@ -373,9 +408,9 @@ impl LlmClient {
         let raw_content = claude_res
             .content
             .first()
-            .map(|c| c.text.clone())
+            .map(|c| c.text.as_str())
             .unwrap_or_default();
 
-        Ok(parse_translation_json(&raw_content))
+        Ok(parse_translation_json(raw_content))
     }
 }

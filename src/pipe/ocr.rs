@@ -56,18 +56,47 @@ impl OcrManager {
     }
 
     pub fn run_ocr(&mut self, img: &RgbImage) -> Result<Vec<OcrLineItem>, String> {
+        let (orig_w, orig_h) = (img.width(), img.height());
+        let scale = if orig_w < 500 && orig_h < 500 { 2.0f32 } else { 1.0f32 };
+
+        let scaled_img;
+        let target_img = if scale > 1.0 {
+            scaled_img = image::imageops::resize(
+                img,
+                (orig_w as f32 * scale).round() as u32,
+                (orig_h as f32 * scale).round() as u32,
+                image::imageops::FilterType::CatmullRom,
+            );
+            &scaled_img
+        } else {
+            img
+        };
+
         let res = self
             .ocr
-            .run_image(img)
+            .run_image(target_img)
             .map_err(|e| format!("Native OCR execution failed: {}", e))?;
 
         let lines = res
             .lines
             .into_iter()
-            .map(|l| OcrLineItem {
-                r#box: l.bbox.points,
-                text: l.text,
-                score: l.score,
+            .map(|l| {
+                let scaled_box = if scale > 1.0 {
+                    [
+                        [l.bbox.points[0][0] / scale, l.bbox.points[0][1] / scale],
+                        [l.bbox.points[1][0] / scale, l.bbox.points[1][1] / scale],
+                        [l.bbox.points[2][0] / scale, l.bbox.points[2][1] / scale],
+                        [l.bbox.points[3][0] / scale, l.bbox.points[3][1] / scale],
+                    ]
+                } else {
+                    l.bbox.points
+                };
+
+                OcrLineItem {
+                    r#box: scaled_box,
+                    text: l.text,
+                    score: l.score,
+                }
             })
             .collect();
 

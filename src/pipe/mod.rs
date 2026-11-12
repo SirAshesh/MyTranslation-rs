@@ -1,8 +1,10 @@
 pub mod clustering;
 pub mod inpainting;
 pub mod llm_client;
+pub mod local_runtime;
 pub mod ocr;
 pub mod renderer;
+pub mod text_cleaner;
 pub mod translator;
 
 pub use clustering::cluster_lines;
@@ -62,7 +64,7 @@ impl Pipeline {
         };
         info!("Native OCR detected {} lines in {:?}", ocr_lines.len(), t_ocr.elapsed());
 
-        let bubbles = cluster_lines(ocr_lines, width, height);
+        let bubbles = cluster_lines(ocr_lines, width, height, source_lang);
         info!("Clustered into {} speech bubbles", bubbles.len());
 
         if bubbles.is_empty() {

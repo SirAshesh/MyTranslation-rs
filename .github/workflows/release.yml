@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 jobs:
-  build-release:
+  build-windows:
     name: Build & Package (Windows x64)
     runs-on: windows-latest
 
@@ -73,18 +73,83 @@ jobs:
           Compress-Archive -Path "$distDir" -DestinationPath "ImageTrans-rs-windows-x64.zip" -CompressionLevel Optimal
           Write-Host "Successfully packaged ImageTrans-rs-windows-x64.zip"
 
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifact
+          path: ImageTrans-rs-windows-x64.zip
+
+  build-ubuntu:
+    name: Build & Package (Ubuntu x64)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Ubuntu Release
+        run: |
+          DIST_DIR="staging/ImageTrans-rs"
+          mkdir -p "$DIST_DIR/fonts" "$DIST_DIR/models"
+
+          cp target/release/server-rs "$DIST_DIR/server-rs"
+          chmod +x "$DIST_DIR/server-rs"
+          cp -r fonts/* "$DIST_DIR/fonts/"
+          cp config.example.json "$DIST_DIR/"
+          cp README.md "$DIST_DIR/"
+          cp run.sh "$DIST_DIR/"
+          chmod +x "$DIST_DIR/run.sh"
+
+          curl -sSL -o "$DIST_DIR/models/en_PP-OCRv3_det_mobile.onnx" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/det/en_PP-OCRv3_det_mobile.onnx"
+          curl -sSL -o "$DIST_DIR/models/en_PP-OCRv4_rec_mobile.onnx" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile.onnx"
+          curl -sSL -o "$DIST_DIR/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
+          curl -sSL -o "$DIST_DIR/models/en_dict.txt" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/paddle/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile/en_dict.txt"
+
+          tar -czf ImageTrans-rs-ubuntu-x64.tar.gz -C staging ImageTrans-rs
+          ls -lh ImageTrans-rs-ubuntu-x64.tar.gz
+
+      - name: Upload Ubuntu Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-artifact
+          path: ImageTrans-rs-ubuntu-x64.tar.gz
+
+  publish-release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-ubuntu]
+
+    steps:
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
       - name: Resolve Release Tag
         id: resolve_tag
-        shell: pwsh
         run: |
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME) {
-            $tag = $env:GITHUB_REF_NAME
-          } elseif ('${{ inputs.version }}') {
-            $tag = '${{ inputs.version }}'
-          } else {
-            $tag = 'v0.1.0'
-          }
-          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          if [ "${{ github.ref_type }}" = "tag" ] && [ -n "${{ github.ref_name }}" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ -n "${{ inputs.version }}" ]; then
+            TAG="${{ inputs.version }}"
+          else
+            TAG="v0.1.0"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -93,5 +158,7 @@ jobs:
           name: ImageTrans-rs ${{ steps.resolve_tag.outputs.tag }}
           draft: false
           prerelease: false
-          files: ImageTrans-rs-windows-x64.zip
+          files: |
+            ImageTrans-rs-windows-x64.zip
+            ImageTrans-rs-ubuntu-x64.tar.gz
           generate_release_notes: true

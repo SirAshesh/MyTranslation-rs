@@ -1,4 +1,5 @@
 use super::domain::{default_source_lang, default_target_lang};
+use super::local::DEFAULT_LOCAL_QUANT;
 use serde::{Deserialize, Serialize};
 
 fn default_port() -> u16 {
@@ -25,6 +26,10 @@ fn default_claude_model() -> String {
     "claude-3-5-sonnet-latest".to_string()
 }
 
+fn default_local_model() -> String {
+    DEFAULT_LOCAL_QUANT.to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     #[serde(default = "default_port")]
@@ -43,6 +48,8 @@ pub struct AppConfig {
     pub claude_model: String,
     #[serde(default)]
     pub claude_api_key: String,
+    #[serde(default = "default_local_model")]
+    pub local_model: String,
 }
 
 impl Default for AppConfig {
@@ -56,6 +63,7 @@ impl Default for AppConfig {
             claude_base_url: default_claude_url(),
             claude_model: default_claude_model(),
             claude_api_key: String::new(),
+            local_model: default_local_model(),
         }
     }
 }
@@ -76,6 +84,8 @@ pub struct SaveSettingsForm {
     pub claude_model: String,
     #[serde(default)]
     pub claude_api_key: String,
+    #[serde(default = "default_local_model")]
+    pub local_model: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,6 +102,7 @@ pub struct SettingsResponse {
     pub claude_model: String,
     pub claude_key_configured: bool,
     pub claude_masked_key: String,
+    pub local_model: String,
     pub active_configured: bool,
 }
 
@@ -111,6 +122,8 @@ pub struct TestKeyRequest {
     pub claude_model: String,
     #[serde(default)]
     pub claude_api_key: String,
+    #[serde(default)]
+    pub local_model: String,
 }
 
 #[derive(Debug, Serialize)]

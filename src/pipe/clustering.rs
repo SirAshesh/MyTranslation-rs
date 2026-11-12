@@ -1,323 +1,26 @@
 use crate::model::{Bubble, LineInfo, OcrLineItem};
-use regex::Regex;
-use std::collections::HashSet;
+use crate::pipe::text_cleaner::{
+    contains_cjk, is_junk_or_sfx, join_manga_lines, normalize_source_text,
+};
 
-fn has_repeated_letters(w: &str) -> bool {
-    let mut count = 0;
-    let mut prev = '\0';
-    for c in w.chars() {
-        if c == prev && c.is_alphabetic() {
-            count += 1;
-            if count >= 3 {
-                return true;
-            }
-        } else {
-            prev = c;
-            count = 1;
-        }
-    }
-    false
+struct Cluster {
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    cx_sum: f32,
+    cy_sum: f32,
+    w_sum: f32,
+    h_sum: f32,
+    lines: Vec<LineInfo>,
 }
 
-pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
-    let clean = text.trim();
-    if clean.is_empty() {
-        return true;
-    }
-
-    let stripped: String = clean.chars().filter(|c| c.is_alphanumeric()).collect();
-    if stripped.is_empty() {
-        return true;
-    }
-
-    if clean.chars().all(|c| c.is_ascii_digit()) || stripped.chars().all(|c| c.is_ascii_digit()) {
-        return true;
-    }
-
-    let mixed_re = Regex::new(r"^\d+[A-Za-z]+$|^[A-Za-z]+\d+$").unwrap();
-    if mixed_re.is_match(&stripped) {
-        return true;
-    }
-
-    let valid_short: HashSet<&'static str> = [
-        "NO", "OK", "GO", "HI", "OH", "AH", "ME", "MY", "HE", "WE", "SO",
-        "DO", "IF", "IN", "ON", "AT", "TO", "UP", "BY", "IS", "AM", "US", "IT"
-    ].into_iter().collect();
-
-    if stripped.len() <= 2 {
-        let up = stripped.to_uppercase();
-        if !valid_short.contains(up.as_str()) && up != "I" && up != "A" {
-            return true;
-        }
-        if score < 0.85 && (up == "I" || up == "A") {
-            return true;
-        }
-        if !valid_short.contains(up.as_str()) && score < 0.88 {
-            return true;
-        }
-    }
-
-    let paren_re = Regex::new(r"[\(\[\{]([A-Za-z\s\-]{2,16})[\)\]\}]").unwrap();
-    if let Some(caps) = paren_re.captures(clean) {
-        let inner = caps[1].to_uppercase();
-        let sfx_terms = [
-            "WHOOSH", "GAPE", "FWIP", "THUD", "TWITCH", "CLENCH", "SIGH",
-            "GASP", "STEP", "CREAK", "BLUSH", "SHIVER", "DRIP", "POKE"
-        ];
-        if sfx_terms.iter().any(|&term| inner.contains(term)) {
-            return true;
-        }
-    }
-
-    let words: Vec<String> = clean
-        .split_whitespace()
-        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase())
-        .filter(|w| !w.is_empty())
-        .collect();
-
-    if words.is_empty() {
-        return true;
-    }
-
-    let known_sfx: HashSet<&'static str> = [
-        "POKAAAN", "POKAN", "POKA", "POK", "BIKU", "PIKU", "GIKU", "PEKO", "ZUKI", "KIRI", "CKIRI",
-        "ZU", "ZUZU", "SHFD", "DOKI", "PATA", "NIKORI", "DODODO", "GOGOGO",
-        "FWIP", "WHOOSH", "THUD", "GULP", "WHIRL", "TWITCH", "GAPE", "CHUUSHD", "CLENCH",
-        "SHIIN", "CHIRA", "GYU", "DOSA", "PASA", "WINCE", "BA", "BAA", "BASH",
-        "GLL", "PAT", "COLTD", "CTWITCHD", "CCLENCHD", "HMPH", "TCH", "TSK", "PFFT",
-        "ACK", "AGH", "ARGH", "UGH", "GAAH", "KAH", "KHA", "NGH", "NNGH", "OOF",
-        "RS", "ACR", "FW", "FLL", "FLLS", "IP", "FOI"
-    ].into_iter().collect();
-
-    let sfx_substrings = [
-        "FWIP", "WHOOSH", "ACR", "CLENCH", "TWITCH", "GAPE", "THUD", "GULP", "ACK",
-        "POKAAAN", "POKAN", "DOKI", "HMPH", "PFFT", "CHIRA", "NIKORI"
-    ];
-    if words.len() <= 2 && words.iter().any(|w| sfx_substrings.iter().any(|&sub| w.contains(sub))) {
-        return true;
-    }
-
-    let non_sfx_words: Vec<&String> = words
-        .iter()
-        .filter(|w| !known_sfx.contains(w.as_str()) && w.as_str() != "A" && w.as_str() != "AN" && w.as_str() != "THE")
-        .collect();
-
-    if non_sfx_words.is_empty() || non_sfx_words.iter().all(|w| w.len() <= 1) {
-        return true;
-    }
-
-    if words.iter().any(|w| w == "ACR" || w == "RS" || w == "FLL" || w == "FLLS" || w == "FW" || w == "FOI") && words.len() <= 3 {
-        return true;
-    }
-
-    if words.len() <= 2 && words.iter().all(|w| has_repeated_letters(w)) {
-        return true;
-    }
-
-    if h > w * 1.35 && clean.len() > 1 && score < 0.88 {
-        return true;
-    }
-
-    false
-}
-
-pub fn normalize_source_text(text: &str) -> String {
-    let mut s = text.trim().to_string();
-    if s.is_empty() {
-        return s;
-    }
-
-    let hyphen_re = Regex::new(r"\b([A-Za-z]+)-\s+([A-Za-z]+)\b").unwrap();
-    s = hyphen_re.replace_all(&s, "$1$2").to_string();
-
-    let trailing_hyphen_re = Regex::new(r"\b([A-Za-z]+)-\b").unwrap();
-    s = trailing_hyphen_re.replace_all(&s, "$1").to_string();
-
-    let honorific_u_re = Regex::new(r"(?i)\b([A-Za-z]+)u(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
-    s = honorific_u_re.replace_all(&s, "$1-$2").to_string();
-
-    let hariju_honor_re = Regex::new(r"(?i)\bhariju[-~]?(san|sama|kun|chan)\b").unwrap();
-    s = hariju_honor_re.replace_all(&s, "Harij-$1").to_string();
-
-    let hariju_standalone_re = Regex::new(r"(?i)\bhariju\b").unwrap();
-    s = hariju_standalone_re.replace_all(&s, "Harij").to_string();
-
-    let honorific_dash_re = Regex::new(r"(?i)\b([A-Za-z]+)\s*[-~—]\s*(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
-    s = honorific_dash_re.replace_all(&s, "$1-$2").to_string();
-
-    let glued_replacements = [
-        (Regex::new(r"(?i)\banda\b").unwrap(), "and a"),
-        (Regex::new(r"(?i)\bfora\b").unwrap(), "for a"),
-        (Regex::new(r"(?i)\bwitha\b").unwrap(), "with a"),
-        (Regex::new(r"(?i)\bwhata\b").unwrap(), "what a"),
-        (Regex::new(r"(?i)\balove\b").unwrap(), "a love"),
-        (Regex::new(r"(?i)\baperson\b").unwrap(), "a person"),
-        (Regex::new(r"(?i)\bataperson\b").unwrap(), "at a person"),
-        (Regex::new(r"(?i)\bina\b").unwrap(), "in a"),
-        (Regex::new(r"(?i)\bofa\b").unwrap(), "of a"),
-        (Regex::new(r"(?i)\basina\b").unwrap(), "as in a"),
-        (Regex::new(r"(?i)\blikea\b").unwrap(), "like a"),
-        (Regex::new(r"(?i)\bhavea\b").unwrap(), "have a"),
-        (Regex::new(r"(?i)\bsucha\b").unwrap(), "such a"),
-        (Regex::new(r"(?i)\bonlya\b").unwrap(), "only a"),
-        (Regex::new(r"(?i)\bimiss\b").unwrap(), "I miss"),
-        (Regex::new(r"(?i)\biwant\b").unwrap(), "I want"),
-        (Regex::new(r"(?i)\bineed\b").unwrap(), "I need"),
-        (Regex::new(r"(?i)\biknow\b").unwrap(), "I know"),
-        (Regex::new(r"(?i)\bithink\b").unwrap(), "I think"),
-        (Regex::new(r"(?i)\bihave\b").unwrap(), "I have"),
-        (Regex::new(r"(?i)\bihad\b").unwrap(), "I had"),
-        (Regex::new(r"(?i)\bihope\b").unwrap(), "I hope"),
-        (Regex::new(r"(?i)\biwish\b").unwrap(), "I wish"),
-        (Regex::new(r"(?i)\bilove\b").unwrap(), "I love"),
-        (Regex::new(r"(?i)\bifeltlike\b").unwrap(), "I felt like"),
-        (Regex::new(r"(?i)\bifelt\b").unwrap(), "I felt"),
-        (Regex::new(r"(?i)\bisaid\b").unwrap(), "I said"),
-        (Regex::new(r"(?i)\biwas\b").unwrap(), "I was"),
-        (Regex::new(r"(?i)\biwent\b").unwrap(), "I went"),
-        (Regex::new(r"(?i)\biam\b").unwrap(), "I am"),
-        (Regex::new(r"(?i)\bican\b").unwrap(), "I can"),
-        (Regex::new(r"(?i)\bicould\b").unwrap(), "I could"),
-        (Regex::new(r"(?i)\biwould\b").unwrap(), "I would"),
-        (Regex::new(r"(?i)\biassumed\b").unwrap(), "I assumed"),
-        (Regex::new(r"(?i)\bionly\b").unwrap(), "I only"),
-        (Regex::new(r"(?i)\binever\b").unwrap(), "I never"),
-        (Regex::new(r"(?i)\bimean\b").unwrap(), "I mean"),
-        (Regex::new(r"(?i)\biover\b").unwrap(), "I over"),
-        (Regex::new(r"(?i)\biasked\b").unwrap(), "I asked"),
-        (Regex::new(r"(?i)\bicall\b").unwrap(), "I call"),
-        (Regex::new(r"(?i)\bitold\b").unwrap(), "I told"),
-        (Regex::new(r"(?i)\bijust\b").unwrap(), "I just"),
-        (Regex::new(r"(?i)\bididn't\b|\bididnt\b").unwrap(), "I didn't"),
-        (Regex::new(r"(?i)\bidon't\b|\bidont\b").unwrap(), "I don't"),
-        (Regex::new(r"(?i)\bi'dbeen\b|\bidbeen\b").unwrap(), "I'd been"),
-        (Regex::new(r"(?i)\bi'dbeenso\b|\bidbeenso\b").unwrap(), "I'd been so"),
-        (Regex::new(r"(?i)\bifididn't\b|\bifididnt\b").unwrap(), "if I didn't"),
-        (Regex::new(r"(?i)\bifidid\b").unwrap(), "if I did"),
-        (Regex::new(r"(?i)\bifidon't\b").unwrap(), "if I don't"),
-        (Regex::new(r"(?i)\bsoi\b").unwrap(), "so I"),
-        (Regex::new(r"(?i)\bthati\b").unwrap(), "that I"),
-        (Regex::new(r"(?i)\bthingi\b").unwrap(), "thing I"),
-        (Regex::new(r"(?i)\btheni\b").unwrap(), "then I"),
-        (Regex::new(r"(?i)\bbuti\b").unwrap(), "but I"),
-        (Regex::new(r"(?i)\bnowi\b").unwrap(), "now I"),
-        (Regex::new(r"(?i)\bthefirst\b").unwrap(), "the first"),
-        (Regex::new(r"(?i)\bthesweet\b").unwrap(), "the sweet"),
-        (Regex::new(r"(?i)\bthatis\b").unwrap(), "that is"),
-        (Regex::new(r"(?i)\bafterwhat\b").unwrap(), "after what"),
-        (Regex::new(r"(?i)\baskme\b").unwrap(), "ask me"),
-        (Regex::new(r"(?i)\blikeand\b").unwrap(), "like and"),
-        (Regex::new(r"(?i)\btobring\b").unwrap(), "to bring"),
-        (Regex::new(r"(?i)\bseeme\b").unwrap(), "see me"),
-        (Regex::new(r"(?i)\bmyown\b").unwrap(), "my own"),
-        (Regex::new(r"(?i)\bliketo\b").unwrap(), "like to"),
-        (Regex::new(r"(?i)\btomake\b").unwrap(), "to make"),
-        (Regex::new(r"(?i)\bthenit\b").unwrap(), "then it"),
-        (Regex::new(r"(?i)\bbutifi\b").unwrap(), "but if I"),
-        (Regex::new(r"(?i)\bbutif\b").unwrap(), "but if"),
-        (Regex::new(r"(?i)\bandnowi\b").unwrap(), "and now I"),
-        (Regex::new(r"(?i)\bwhyis\b").unwrap(), "why is"),
-        (Regex::new(r"(?i)\bdoyou\b").unwrap(), "do you"),
-        (Regex::new(r"(?i)\btryto\b").unwrap(), "try to"),
-        (Regex::new(r"(?i)\bpotionthat\b").unwrap(), "potion that"),
-        (Regex::new(r"(?i)\bpotionis\b").unwrap(), "potion is"),
-        (Regex::new(r"(?i)\bpotioni\b").unwrap(), "potion I"),
-        (Regex::new(r"(?i)\banotherlove\b").unwrap(), "another love"),
-        (Regex::new(r"(?i)\bitwas\b").unwrap(), "it was"),
-        (Regex::new(r"(?i)\bsothis\b").unwrap(), "so this"),
-        (Regex::new(r"(?i)\bthenext\b").unwrap(), "the next"),
-        (Regex::new(r"(?i)\btheday\b").unwrap(), "the day"),
-        (Regex::new(r"(?i)\btheone\b").unwrap(), "the one"),
-        (Regex::new(r"(?i)\bthemoney\b").unwrap(), "the money"),
-        (Regex::new(r"(?i)\bthetester\b").unwrap(), "the tester"),
-        (Regex::new(r"(?i)\btocome\b").unwrap(), "to come"),
-        (Regex::new(r"(?i)\btospend\b").unwrap(), "to spend"),
-        (Regex::new(r"(?i)\baboutthe\b").unwrap(), "about the"),
-        (Regex::new(r"(?i)\bafoolof\b").unwrap(), "a fool of"),
-        (Regex::new(r"(?i)\balovepotion\b").unwrap(), "a love potion"),
-        (Regex::new(r"(?i)\bamawitch\b").unwrap(), "am a witch"),
-        (Regex::new(r"(?i)\bican'teven\b|\bicanteven\b").unwrap(), "I can't even"),
-        (Regex::new(r"(?i)\bitwasall\b").unwrap(), "it was all"),
-        (Regex::new(r"(?i)\banillusion\b").unwrap(), "an illusion"),
-        (Regex::new(r"(?i)\bi'mnottoo\b|\bimnottoo\b").unwrap(), "I'm not too"),
-        (Regex::new(r"(?i)\biwasn't\b|\biwasnt\b").unwrap(), "I wasn't"),
-        (Regex::new(r"(?i)\bawareof\b").unwrap(), "aware of"),
-        (Regex::new(r"(?i)\btoldme\b").unwrap(), "told me"),
-        (Regex::new(r"(?i)\biknewfrom\b").unwrap(), "I knew from"),
-        (Regex::new(r"(?i)\bandannoying\b").unwrap(), "and annoying"),
-        (Regex::new(r"(?i)\boftime\b").unwrap(), "of time"),
-        (Regex::new(r"(?i)\bitimproves\b").unwrap(), "it improves"),
-        (Regex::new(r"(?i)\bifsirharij\b").unwrap(), "if Sir Harij"),
-        (Regex::new(r"(?i)\bistillvividly\b").unwrap(), "I still vividly"),
-        (Regex::new(r"(?i)\bthatoccurred\b").unwrap(), "that occurred"),
-        (Regex::new(r"(?i)\bi'deversee\b|\bideversee\b").unwrap(), "I'd ever see"),
-        (Regex::new(r"(?i)\bifyouaskme\b").unwrap(), "if you ask me"),
-        (Regex::new(r"(?i)\bbutjust\b").unwrap(), "but just"),
-    ];
-
-    for (re, rep) in glued_replacements.iter() {
-        s = re.replace_all(&s, *rep).to_string();
-    }
-
-    let alpha_count = s.chars().filter(|c| c.is_alphabetic()).count();
-    let upper_count = s.chars().filter(|c| c.is_uppercase()).count();
-
-    if alpha_count > 0 && (upper_count as f32 / alpha_count as f32) > 0.60 {
-        let sent_re = Regex::new(r"([.?!]+\s*)").unwrap();
-        let mut result = String::new();
-        let mut last_idx = 0;
-
-        for mat in sent_re.find_iter(&s) {
-            let chunk = &s[last_idx..mat.start()];
-            let punct = mat.as_str();
-            result.push_str(&format_sentence(chunk));
-            result.push_str(punct);
-            last_idx = mat.end();
-        }
-
-        if last_idx < s.len() {
-            let tail = &s[last_idx..];
-            result.push_str(&format_sentence(tail));
-        }
-
-        s = result;
-    }
-
-    s
-}
-
-fn format_sentence(chunk: &str) -> String {
-    let trimmed = chunk.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    let lower = trimmed.to_lowercase();
-    let mut chars = lower.chars();
-    let mut formatted = match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-    };
-
-    let i_re = Regex::new(r"\bi\b").unwrap();
-    formatted = i_re.replace_all(&formatted, "I").to_string();
-    let im_re = Regex::new(r"\bi'm\b").unwrap();
-    formatted = im_re.replace_all(&formatted, "I'm").to_string();
-    let ill_re = Regex::new(r"\bi'll\b").unwrap();
-    formatted = ill_re.replace_all(&formatted, "I'll").to_string();
-    let id_re = Regex::new(r"\bi'd\b").unwrap();
-    formatted = id_re.replace_all(&formatted, "I'd").to_string();
-    let ive_re = Regex::new(r"\bi've\b").unwrap();
-    formatted = ive_re.replace_all(&formatted, "I've").to_string();
-    let harij_re = Regex::new(r"(?i)\bsir harij\b").unwrap();
-    formatted = harij_re.replace_all(&formatted, "Sir Harij").to_string();
-    let rose_re = Regex::new(r"(?i)\brose\b").unwrap();
-    formatted = rose_re.replace_all(&formatted, "Rose").to_string();
-
-    formatted
-}
-
-pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u32) -> Vec<Bubble> {
+pub fn cluster_lines(
+    ocr_lines: Vec<OcrLineItem>,
+    img_width: u32,
+    img_height: u32,
+    source_lang: &str,
+) -> Vec<Bubble> {
     if ocr_lines.is_empty() {
         return Vec::new();
     }
@@ -358,43 +61,64 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
         });
     }
 
-    lines.sort_by(|a, b| {
-        a.cy.partial_cmp(&b.cy)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.cx.partial_cmp(&b.cx).unwrap_or(std::cmp::Ordering::Equal))
-    });
+    if lines.is_empty() {
+        return Vec::new();
+    }
 
-    struct Cluster {
-        x1: f32,
-        y1: f32,
-        x2: f32,
-        y2: f32,
-        w: f32,
-        cx_sum: f32,
-        h_sum: f32,
-        lines: Vec<LineInfo>,
+    let is_lang_cjk = source_lang.starts_with("ja") || source_lang.starts_with("zh");
+    let vertical_line_count = lines.iter().filter(|l| l.h > l.w * 1.15).count();
+    let mostly_vertical = (vertical_line_count as f32 / lines.len() as f32) > 0.40;
+
+    if mostly_vertical || is_lang_cjk {
+        lines.sort_by(|a, b| {
+            b.cx.partial_cmp(&a.cx)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cy.partial_cmp(&b.cy).unwrap_or(std::cmp::Ordering::Equal))
+        });
+    } else {
+        lines.sort_by(|a, b| {
+            a.cy.partial_cmp(&b.cy)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.cx.partial_cmp(&b.cx).unwrap_or(std::cmp::Ordering::Equal))
+        });
     }
 
     let mut clusters: Vec<Cluster> = Vec::new();
 
     for l in lines {
+        let line_is_vertical = l.h > l.w * 1.15 || (contains_cjk(&l.text) && l.h >= l.w);
         let mut matched = false;
+
         for c in clusters.iter_mut() {
             let count = c.lines.len() as f32;
             let avg_cx = c.cx_sum / count;
+            let avg_cy = c.cy_sum / count;
+            let avg_w = (c.w_sum / count + l.w) / 2.0;
             let avg_h = (c.h_sum / count + l.h) / 2.0;
 
-            let dy = (l.y1 - c.y2).max(0.0);
+            let cluster_w = c.x2 - c.x1;
+            let cluster_h = c.y2 - c.y1;
+
+            let dy = (l.y1 - c.y2).max(c.y1 - l.y2).max(0.0);
             let dcx = (l.cx - avg_cx).abs();
             let overlap_x = c.x2.min(l.x2) - c.x1.max(l.x1);
+            let horizontal_match = dy <= avg_h * 1.55 && (dcx <= 40.0 || overlap_x > 0.35 * cluster_w.min(l.w));
 
-            if dy <= avg_h * 1.55 && (dcx <= 38.0 || overlap_x > 0.45 * c.w.min(l.w)) {
+            let dx = (l.x1 - c.x2).max(c.x1 - l.x2).max(0.0);
+            let dcy = (l.cy - avg_cy).abs();
+            let overlap_y = c.y2.min(l.y2) - c.y1.max(l.y1);
+            let vertical_match = (line_is_vertical || is_lang_cjk)
+                && dx <= avg_w * 2.2
+                && (dcy <= avg_h * 0.75 || overlap_y > 0.30 * cluster_h.min(l.h));
+
+            if horizontal_match || vertical_match {
                 c.x1 = c.x1.min(l.x1);
                 c.y1 = c.y1.min(l.y1);
                 c.x2 = c.x2.max(l.x2);
                 c.y2 = c.y2.max(l.y2);
-                c.w = c.x2 - c.x1;
                 c.cx_sum += l.cx;
+                c.cy_sum += l.cy;
+                c.w_sum += l.w;
                 c.h_sum += l.h;
                 c.lines.push(l.clone());
                 matched = true;
@@ -408,25 +132,47 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
                 y1: l.y1,
                 x2: l.x2,
                 y2: l.y2,
-                w: l.w,
                 cx_sum: l.cx,
+                cy_sum: l.cy,
+                w_sum: l.w,
                 h_sum: l.h,
                 lines: vec![l],
             });
         }
     }
 
-    let space_re = Regex::new(r"\s+").unwrap();
-
     let mut bubbles = Vec::new();
     let mut bubble_id = 1;
+
     for mut c in clusters {
-        c.lines.sort_by(|a, b| a.y1.partial_cmp(&b.y1).unwrap_or(std::cmp::Ordering::Equal));
+        let is_vertical_bubble = c.lines.iter().filter(|l| l.h > l.w * 1.15).count() * 2 >= c.lines.len()
+            || (c.lines.iter().any(|l| contains_cjk(&l.text)) && (c.y2 - c.y1) > (c.x2 - c.x1) * 1.2);
+
+        if is_vertical_bubble {
+            c.lines.sort_by(|a, b| {
+                let dcx = (b.cx - a.cx).abs();
+                let col_w = a.w.max(b.w);
+                if dcx > col_w * 0.45 {
+                    b.cx.partial_cmp(&a.cx).unwrap_or(std::cmp::Ordering::Equal)
+                } else {
+                    a.y1.partial_cmp(&b.y1).unwrap_or(std::cmp::Ordering::Equal)
+                }
+            });
+        } else {
+            c.lines.sort_by(|a, b| {
+                let dcy = (b.cy - a.cy).abs();
+                let row_h = a.h.max(b.h);
+                if dcy > row_h * 0.45 {
+                    a.y1.partial_cmp(&b.y1).unwrap_or(std::cmp::Ordering::Equal)
+                } else {
+                    a.x1.partial_cmp(&b.x1).unwrap_or(std::cmp::Ordering::Equal)
+                }
+            });
+        }
 
         let raw_texts: Vec<&str> = c.lines.iter().map(|l| l.text.as_str()).collect();
-        let combined = raw_texts.join(" ");
-        let cleaned_text = space_re.replace_all(&combined, " ").trim().to_string();
-        let normalized = normalize_source_text(&cleaned_text);
+        let combined = join_manga_lines(&raw_texts);
+        let normalized = normalize_source_text(&combined);
 
         let bubble_w = (c.x2 - c.x1).max(1.0);
         let bubble_h = (c.y2 - c.y1).max(1.0);
@@ -451,4 +197,47 @@ pub fn cluster_lines(ocr_lines: Vec<OcrLineItem>, img_width: u32, img_height: u3
     }
 
     bubbles
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_horizontal_line_clustering() {
+        let lines = vec![
+            OcrLineItem {
+                text: "HELLO".to_string(),
+                score: 0.95,
+                r#box: [[10.0, 10.0], [50.0, 10.0], [50.0, 25.0], [10.0, 25.0]],
+            },
+            OcrLineItem {
+                text: "WORLD".to_string(),
+                score: 0.95,
+                r#box: [[10.0, 30.0], [50.0, 30.0], [50.0, 45.0], [10.0, 45.0]],
+            },
+        ];
+
+        let bubbles = cluster_lines(lines, 200, 200, "en");
+        assert_eq!(bubbles.len(), 1);
+        assert_eq!(bubbles[0].source_text, "Hello world");
+    }
+
+    #[test]
+    fn test_vertical_japanese_manga_clustering() {
+        let col_right = OcrLineItem {
+            text: "何でそんなこと".to_string(),
+            score: 0.92,
+            r#box: [[150.0, 20.0], [170.0, 20.0], [170.0, 140.0], [150.0, 140.0]],
+        };
+        let col_left = OcrLineItem {
+            text: "言うんだよ".to_string(),
+            score: 0.90,
+            r#box: [[120.0, 20.0], [140.0, 20.0], [140.0, 130.0], [120.0, 130.0]],
+        };
+
+        let bubbles = cluster_lines(vec![col_right, col_left], 300, 300, "ja");
+        assert_eq!(bubbles.len(), 1);
+        assert_eq!(bubbles[0].source_text, "何でそんなこと言うんだよ");
+    }
 }
