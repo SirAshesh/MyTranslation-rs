@@ -19,7 +19,7 @@ A native Rust translation and typesetting server for manga, manhwa, and comic pa
 
 ## Sample
 
-<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video>
+<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video> or [Click Here](./sample/Sample.mp4)
 
 ## Configuration
 
