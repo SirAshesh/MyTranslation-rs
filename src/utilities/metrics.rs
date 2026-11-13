@@ -9,12 +9,22 @@ const MAX_RECENT_EVENTS: usize = 24;
 const MAX_TIMELINE_BUCKETS: usize = 20;
 
 #[derive(Clone, Debug, Default, Serialize)]
+pub struct LlmUsageStats {
+    pub prompt_tokens: u64,
+    pub prompt_cached_tokens: u64,
+    pub completion_tokens: u64,
+    pub local_cache_hits: u64,
+    pub local_cache_misses: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct PipelineTimings {
     pub ocr_ms: u64,
     pub translate_ms: u64,
     pub render_ms: u64,
     pub total_ms: u64,
     pub bubble_count: usize,
+    pub usage: LlmUsageStats,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +84,11 @@ pub struct StatsSummaryTotals {
     pub render_ms_sum: u64,
     pub total_ms_sum: u64,
     pub last_total_ms: u64,
+    pub prompt_tokens_sum: u64,
+    pub prompt_cached_tokens_sum: u64,
+    pub completion_tokens_sum: u64,
+    pub local_cache_hits: u64,
+    pub local_cache_misses: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -90,6 +105,13 @@ pub struct StatsSnapshot {
     pub total_bubbles: usize,
     pub avg_total_ms: u64,
     pub last_total_ms: u64,
+    pub prompt_tokens: u64,
+    pub prompt_cached_tokens: u64,
+    pub completion_tokens: u64,
+    pub local_cache_hits: u64,
+    pub local_cache_misses: u64,
+    pub system_cache_rate_pct: f64,
+    pub local_cache_rate_pct: f64,
     pub stage_averages: StageAverages,
     pub recent_requests: Vec<RequestMetric>,
     pub timeline: Vec<TimelineBucket>,
@@ -196,6 +218,11 @@ impl StatsTracker {
         guard.summary.render_ms_sum += timings.render_ms;
         guard.summary.total_ms_sum += timings.total_ms;
         guard.summary.last_total_ms = timings.total_ms;
+        guard.summary.prompt_tokens_sum += timings.usage.prompt_tokens;
+        guard.summary.prompt_cached_tokens_sum += timings.usage.prompt_cached_tokens;
+        guard.summary.completion_tokens_sum += timings.usage.completion_tokens;
+        guard.summary.local_cache_hits += timings.usage.local_cache_hits;
+        guard.summary.local_cache_misses += timings.usage.local_cache_misses;
 
         if guard.recent.len() >= MAX_RECENT_EVENTS {
             guard.recent.pop_front();
@@ -282,6 +309,21 @@ impl StatsTracker {
             }
         };
 
+        let local_total = s.local_cache_hits + s.local_cache_misses;
+        let local_cache_rate_pct = if local_total > 0 {
+            ((s.local_cache_hits as f64 / local_total as f64) * 1000.0).round() / 10.0
+        } else {
+            0.0
+        };
+        let system_cache_rate_pct = if s.prompt_tokens_sum > 0 {
+            let pct = (s.prompt_cached_tokens_sum.min(s.prompt_tokens_sum) as f64
+                / s.prompt_tokens_sum as f64)
+                * 100.0;
+            (pct * 10.0).round() / 10.0
+        } else {
+            local_cache_rate_pct
+        };
+
         StatsSnapshot {
             status: "online",
             total_processed: s.total_processed,
@@ -295,6 +337,13 @@ impl StatsTracker {
             total_bubbles: s.total_bubbles,
             avg_total_ms: stage_averages.total_ms,
             last_total_ms: s.last_total_ms,
+            prompt_tokens: s.prompt_tokens_sum,
+            prompt_cached_tokens: s.prompt_cached_tokens_sum,
+            completion_tokens: s.completion_tokens_sum,
+            local_cache_hits: s.local_cache_hits,
+            local_cache_misses: s.local_cache_misses,
+            system_cache_rate_pct,
+            local_cache_rate_pct,
             stage_averages,
             recent_requests: guard.recent.iter().cloned().collect(),
             timeline: guard.timeline.iter().cloned().collect(),
@@ -361,6 +410,13 @@ mod tests {
                 render_ms: 100,
                 total_ms: 600,
                 bubble_count: 4,
+                usage: LlmUsageStats {
+                    prompt_tokens: 500,
+                    prompt_cached_tokens: 400,
+                    completion_tokens: 80,
+                    local_cache_hits: 1,
+                    local_cache_misses: 3,
+                },
             },
             1_700_000_040_000,
         );
@@ -374,6 +430,7 @@ mod tests {
                 render_ms: 0,
                 total_ms: 200,
                 bubble_count: 1,
+                usage: LlmUsageStats::default(),
             },
             1_700_000_050_000,
         );
@@ -386,6 +443,8 @@ mod tests {
         assert_eq!(snap.total_bubbles, 5);
         assert_eq!(snap.avg_total_ms, 400);
         assert_eq!(snap.stage_averages.ocr_ms, 60);
+        assert_eq!(snap.system_cache_rate_pct, 80.0);
+        assert_eq!(snap.local_cache_rate_pct, 25.0);
         assert_eq!(snap.timeline.len(), 1);
         assert_eq!(snap.timeline[0].requests, 2);
         assert_eq!(snap.timeline[0].errors, 1);

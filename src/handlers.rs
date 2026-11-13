@@ -236,7 +236,7 @@ pub async fn translate_text_handler(
         .translate_bubbles(&[bubble], &payload.source_lang, &payload.target_lang)
         .await
     {
-        Ok(map) => {
+        Ok(output) => {
             let elapsed_ms = t0.elapsed().as_millis();
             record_translation_event(
                 &state,
@@ -248,13 +248,15 @@ pub async fn translate_text_handler(
                     render_ms: 0,
                     total_ms: elapsed_ms as u64,
                     bubble_count: 1,
+                    usage: output.usage,
                 },
             )
             .await;
-            let target = map
+            let target = output
+                .translations
                 .get(&1)
                 .cloned()
-                .unwrap_or_else(|| map.values().next().cloned().unwrap_or_default());
+                .unwrap_or_else(|| output.translations.values().next().cloned().unwrap_or_default());
             Json(TextTranslateResponse {
                 success: true,
                 source: text.to_string(),
@@ -276,6 +278,7 @@ pub async fn translate_text_handler(
                     render_ms: 0,
                     total_ms: elapsed_ms as u64,
                     bubble_count: 1,
+                    ..PipelineTimings::default()
                 },
             )
             .await;

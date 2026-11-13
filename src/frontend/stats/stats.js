@@ -30,6 +30,8 @@
         kpiMode: document.getElementById("stats-kpi-mode"),
         kpiLatency: document.getElementById("stats-kpi-latency"),
         kpiLast: document.getElementById("stats-kpi-last"),
+        kpiCache: document.getElementById("stats-kpi-cache"),
+        kpiCacheSub: document.getElementById("stats-kpi-cache-sub"),
         chartLatency: document.getElementById("chart-latency"),
         chartTimeline: document.getElementById("chart-timeline"),
         chartStages: document.getElementById("chart-stages"),
@@ -353,6 +355,16 @@
         el.kpiMode.textContent = "Mode: " + (st.translation_mode || "-");
         el.kpiLatency.textContent = (st.avg_total_ms ?? 0) + " ms";
         el.kpiLast.textContent = "Last: " + (st.last_total_ms ?? 0) + " ms";
+
+        const cachePct = Number(st.system_cache_rate_pct ?? 0);
+        const promptTok = st.prompt_tokens ?? 0;
+        const cachedTok = st.prompt_cached_tokens ?? 0;
+        const localHits = st.local_cache_hits ?? 0;
+        if (el.kpiCache && el.kpiCacheSub) {
+            el.kpiCache.textContent = cachePct.toFixed(1) + "%";
+            el.kpiCacheSub.textContent =
+                "Prompt: " + cachedTok + "/" + promptTok + " tok | Local: " + localHits + " hits";
+        }
 
         renderLatencyChart(st.recent_requests || []);
         renderTimelineChart(st.timeline || []);

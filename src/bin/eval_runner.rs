@@ -300,7 +300,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let translations = translator
                     .translate_bubbles(&bubbles, "en", "id")
-                    .await?;
+                    .await?
+                    .translations;
 
                 println!("--- Translations for {} ({} bubbles) ---", stem, bubbles.len());
                 for b in &bubbles {

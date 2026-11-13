@@ -79,7 +79,12 @@ impl StorageDb {
                  translate_ms_sum INTEGER NOT NULL DEFAULT 0,
                  render_ms_sum INTEGER NOT NULL DEFAULT 0,
                  total_ms_sum INTEGER NOT NULL DEFAULT 0,
-                 last_total_ms INTEGER NOT NULL DEFAULT 0
+                 last_total_ms INTEGER NOT NULL DEFAULT 0,
+                 prompt_tokens_sum INTEGER NOT NULL DEFAULT 0,
+                 prompt_cached_tokens_sum INTEGER NOT NULL DEFAULT 0,
+                 completion_tokens_sum INTEGER NOT NULL DEFAULT 0,
+                 local_cache_hits INTEGER NOT NULL DEFAULT 0,
+                 local_cache_misses INTEGER NOT NULL DEFAULT 0
              );
 
              INSERT OR IGNORE INTO stats_summary (id) VALUES (1);
@@ -117,6 +122,22 @@ impl StorageDb {
              );",
         )
         .map_err(|e| format!("Failed to initialize SQLite schema: {}", e))?;
+
+        for col in [
+            "prompt_tokens_sum INTEGER NOT NULL DEFAULT 0",
+            "prompt_cached_tokens_sum INTEGER NOT NULL DEFAULT 0",
+            "completion_tokens_sum INTEGER NOT NULL DEFAULT 0",
+            "local_cache_hits INTEGER NOT NULL DEFAULT 0",
+            "local_cache_misses INTEGER NOT NULL DEFAULT 0",
+        ] {
+            let sql = format!("ALTER TABLE stats_summary ADD COLUMN {}", col);
+            if let Err(err) = conn.execute(&sql, []) {
+                let msg = err.to_string();
+                if !msg.contains("duplicate column name") {
+                    return Err(format!("Failed to migrate stats_summary column: {}", err));
+                }
+            }
+        }
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),

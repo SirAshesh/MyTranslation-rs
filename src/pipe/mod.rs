@@ -3,6 +3,7 @@ pub mod clustering;
 pub mod free_mode;
 pub mod inpainting;
 pub mod llm_client;
+mod llm_wire;
 pub mod local_runtime;
 pub mod ocr;
 pub mod prompts;
@@ -79,15 +80,17 @@ impl Pipeline {
                 render_ms: 0,
                 total_ms: t_start.elapsed().as_millis() as u64,
                 bubble_count: 0,
+                ..PipelineTimings::default()
             };
             return Ok((None, ImgMap { boxes: Vec::new() }, timings));
         }
 
         let t_tr = std::time::Instant::now();
-        let translations = self
+        let llm_output = self
             .translator
             .translate_bubbles(&bubbles, source_lang, target_lang)
             .await?;
+        let translations = llm_output.translations;
         let translate_ms = t_tr.elapsed().as_millis() as u64;
         info!("Translated {} bubbles in {:?}", translations.len(), t_tr.elapsed());
 
@@ -140,6 +143,7 @@ impl Pipeline {
             render_ms,
             total_ms: t_start.elapsed().as_millis() as u64,
             bubble_count: bubbles.len(),
+            usage: llm_output.usage,
         };
         info!("Total pipeline processing time: {:?}", t_start.elapsed());
         Ok((base64_image, ImgMap { boxes }, timings))

@@ -1,5 +1,50 @@
 use crate::model::Bubble;
 
+pub const CLOUD_INITIAL_SYSTEM_PROMPT: &str = r#"You are a professional comic, manga, manhwa, and manhua scanlation translator.
+Translate dialogue items accurately into the target language requested in the user message, matching natural conversational comic panels.
+
+SCANLATION & ACCURACY RULES:
+1. HONORIFICS & SOCIAL REGISTER:
+   - Preserve character-defining honorific suffixes (-san, -kun, -chan, -sama, -senpai, -sensei, -dono, oppa, hyung, noona, unnie, -ge, -jie) or adapt titles naturally by social hierarchy when fitting the target language.
+   - Use natural peer dialogue for friends/close peers and respectful register only when addressing elders, nobles, or superiors.
+2. OCR MERGED WORDS & TYPO RECOVERY:
+   - Input comes from comic OCR that often drops spaces due to tight lettering (e.g. "wemust takea waterbucket" -> "we must take a water bucket", "hehas" -> "he has", "anda love potion" -> "and a love potion", "imiss you" -> "I miss you").
+   - Segment and infer the intended source phrase in context before translating.
+   - Follow standard target-language spacing and orthography with no accidental merged words.
+3. CONCISE & IDIOMATIC DIALOGUE:
+   - Keep lines punchy to fit narrow speech bubbles without omitting meaning or repeating subjects.
+   - Translate idioms by intent (e.g. "Excuse me?" -> polite query or shocked challenge, never literal word-for-word nonsense).
+4. PUNCTUATION & STRICT TARGET LANGUAGE:
+   - Preserve emotional punctuation (..., ?, !).
+   - Write every "target" string exclusively in the requested target language.
+5. REQUIRED OUTPUT FORMAT:
+   Return a valid JSON object strictly matching:
+   {"translations":[{"id":1,"target":"<natural translated dialogue>"}]}"#;
+
+pub const LOCAL_INITIAL_SYSTEM_PROMPT: &str = r#"You are an expert comic and manga scanlation translator.
+Translate every dialogue item accurately into the target language requested in the user message.
+
+RULES:
+1. HONORIFICS & REGISTER:
+   - Keep iconic honorific suffixes (-san, -kun, -chan, -sama, -senpai, -sensei) or adapt hierarchy titles naturally.
+   - Match peer casual tone vs noble/superior respectful tone consistently.
+2. FIX OCR MERGED TEXT:
+   - OCR often drops spaces ("wemust takea waterbucket" -> "we must take a water bucket", "anda love potion" -> "and a love potion").
+   - Segment intended words in the source language before translating, and output clean spacing in the target language.
+3. CONCISE & EXPRESSIVE:
+   - Keep dialogue short enough for speech bubbles and preserve punctuation (..., ?, !).
+4. STRICT JSON OUTPUT:
+   Return only valid JSON:
+   {"translations":[{"id":1,"target":"<natural target translation>"}]}"#;
+
+pub fn initial_system_prompt(local_mode: bool) -> &'static str {
+    if local_mode {
+        LOCAL_INITIAL_SYSTEM_PROMPT
+    } else {
+        CLOUD_INITIAL_SYSTEM_PROMPT
+    }
+}
+
 pub fn resolve_language_name(code: &str, default_name: &str) -> String {
     let trimmed = code.trim();
     if trimmed.is_empty() {
@@ -45,7 +90,7 @@ pub fn resolve_language_name(code: &str, default_name: &str) -> String {
 pub fn resolve_source_language_label(source_lang: &str) -> String {
     let trimmed = source_lang.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") || trimmed.eq_ignore_ascii_case("detect") {
-        return "the automatically detected source language".to_string();
+        return "auto-detected source language".to_string();
     }
     resolve_language_name(trimmed, trimmed)
 }
@@ -54,133 +99,18 @@ pub fn resolve_target_language_label(target_lang: &str) -> String {
     resolve_language_name(target_lang, "Indonesian")
 }
 
-fn uses_word_spaces(target_name: &str) -> bool {
-    !matches!(
-        target_name,
-        "Japanese" | "Simplified Chinese" | "Traditional Chinese" | "Thai"
-    )
+pub fn normalize_bubble_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn conversational_style_rule(target_name: &str) -> String {
-    if target_name == "Indonesian" {
-        return "3. NATURAL CONVERSATIONAL TONE: Use modern, natural Indonesian comic dialogue (aku/kamu, udah, nggak, gimana, kayak, kok, sih, dong, ya). Avoid stiff, formal textbook language or literal machine translation.".to_string();
+fn target_style_note(target_name: &str) -> &'static str {
+    match target_name {
+        "Indonesian" => "Style: natural Indonesian comic dialogue (aku/kamu, udah, nggak, gimana, kok, sih, dong; Saya/Anda only for nobles/superiors; never translate \"Excuse me?\" literally as \"Alasan me\").",
+        "Japanese" | "Simplified Chinese" | "Traditional Chinese" | "Thai" => {
+            "Style: natural comic dialogue following standard orthography with no extra Latin spaces."
+        }
+        _ => "Style: natural conversational comic dialogue matching speaker tone and clean word spacing.",
     }
-    format!(
-        "3. NATURAL CONVERSATIONAL TONE: Use modern, natural {} comic dialogue matching each character's personality, mood, and relationship. Avoid stiff textbook phrasing or literal word-for-word machine translation.",
-        target_name
-    )
-}
-
-fn idioms_rule(target_name: &str) -> String {
-    if target_name == "Indonesian" {
-        return "5. COMMON IDIOMATIC EXPRESSIONS:\n   - \"Excuse me?\" / \"Excuse me!\" is a polite query (\"Permisi?\") or an affronted reaction (\"Apa katamu?!\" / \"Maksudmu?!\"). NEVER translate literally as \"Alasan me\".".to_string();
-    }
-    format!(
-        "5. NATURAL IDIOMS & EXPRESSIONS:\n   - Translate idioms, exclamations, and rhetorical phrases by intended meaning in {} rather than literal dictionary definitions (e.g., \"Excuse me?!\" can mean \"Pardon?\" or \"What did you just say?!\" depending on context).",
-        target_name
-    )
-}
-
-fn spacing_instruction(target_name: &str) -> String {
-    if uses_word_spaces(target_name) {
-        return format!(
-            "ENSURE ALL WORDS IN {} ARE PROPERLY SEPARATED BY SPACES WITH NO MERGED WORDS!",
-            target_name.to_uppercase()
-        );
-    }
-    format!(
-        "Follow natural {} orthography and punctuation without inserting unnatural Latin spacing.",
-        target_name
-    )
-}
-
-fn json_example_block(target_name: &str) -> String {
-    if target_name == "Indonesian" {
-        return r#"{
-  "translations": [
-    {"id": 1, "target": "Tapi kupikir dia udah dapet apa yang dia pesan?"},
-    {"id": 2, "target": "Makasih udah ngizinin aku masuk."}
-  ]
-}"#
-        .to_string();
-    }
-
-    format!(
-        r#"{{
-  "translations": [
-    {{"id": 1, "target": "<Natural {target_name} translation for item 1>"}},
-    {{"id": 2, "target": "<Natural {target_name} translation for item 2>"}}
-  ]
-}}"#
-    )
-}
-
-pub fn build_scanlation_system_prompt(
-    source_lang: &str,
-    target_lang: &str,
-    local_mode: bool,
-) -> String {
-    let source_label = resolve_source_language_label(source_lang);
-    let target_label = resolve_target_language_label(target_lang);
-
-    if local_mode {
-        let local_register = if target_label == "Indonesian" {
-            "- Close peers/friends: Use \"aku/kamu\" and casual conversational words (udah, nggak, gimana, kok, sih, dong, ya).\n   - Avoid stiff, formal textbook phrasing (\"Saya/Anda\" ONLY when speaking to nobles, royalty, or high officials).\n   - Honorifics: Preserve suffixes (-san, -kun, -chan, -sama, -senpai, -sensei) or adapt naturally (\"Tuan [Nama]\", \"Nona [Nama]\", \"Kak [Nama]\").\n   - \"Excuse me?\" / \"Excuse me!\" -> \"Permisi?\" or shock reaction \"Maksudmu apa?!\"."
-                .to_string()
-        } else {
-            format!(
-                "- Adapt honorifics and social hierarchy naturally into {target_label} (preserve iconic suffixes like -san/-kun/-chan/-sama/-senpai/-sensei when they fit character identity, or use appropriate {target_label} forms of address).\n   - Match speech register to the relationship (casual with peers/friends, respectful with elders, nobles, or superiors)."
-            )
-        };
-
-        return format!(
-            r#"You are an expert manga and comic scanlation translator translating dialogue from {source_label} into natural {target_label}.
-Task: Translate every dialogue item accurately from {source_label} into fluent, expressive {target_label} suited for comic speech bubbles.
-
-HONORIFIC & SCANLATION RULES:
-1. HONORIFICS & REGISTER:
-   {local_register}
-2. FIX OCR MERGED TEXT & TYPOS:
-   - Comic OCR input may drop spaces between words due to narrow comic font kerning (e.g., "wemust takea waterbucket" -> "we must take a water bucket", "anda love potion" -> "and a love potion").
-   - Intelligently segment words and understand the intended dialogue in {source_label} before translating into {target_label}.
-   - {spacing}
-3. CONCISE & PANEL-FITTING:
-   - Keep dialogue concise and punchy to fit neatly inside speech bubbles.
-4. PRESERVE EMOTIONAL PUNCTUATION:
-   - Keep ellipsis (...), question marks (?), exclamation marks (!), and tone intact.
-5. REQUIRED JSON OUTPUT FORMAT (every value MUST be written in {target_label}):
-{{
-  "translations": [
-    {{"id": 1, "target": "<Natural {target_label} translation>"}}
-  ]
-}}"#,
-            spacing = spacing_instruction(&target_label)
-        );
-    }
-
-    format!(
-        r#"You are a professional comic and manga scanlation translator.
-Your task is to translate comic dialogue from {source_label} into natural, fluent, and expressive {target_label} suited for conversational comic panels.
-
-SCANLATION QUALITY STANDARDS:
-1. CONCISE & FIT FOR SPEECH BUBBLES: Comic bubble space is strictly limited. Keep translations punchy and compact without omitting essential meaning.
-2. AVOID REDUNDANCY: Do not repeat identical subjects or objects within the same speech bubble.
-{tone_rule}
-4. TOLERANCE FOR OCR MERGED WORDS & TYPOS:
-   Input text originates from comic OCR in {source_label} which frequently drops spaces due to tight lettering (e.g. "wemust takea waterbucket" -> "we must take a water bucket", "hehas" -> "he has", "anda love potion" -> "and a love potion", "imiss you" -> "I miss you").
-   Always segment and understand the intended source dialogue in context before translating.
-   {spacing}
-{idiom_rule}
-6. PRESERVE EMOTIONAL PUNCTUATION: Maintain ellipsis (...), question marks (?), exclamation marks (!), and character expressiveness.
-7. TARGET LANGUAGE STRICTNESS: Write ALL translated text exclusively in {target_label}.
-
-OUTPUT FORMAT MUST BE A VALID JSON OBJECT WITH A 'translations' KEY:
-{examples}"#,
-        tone_rule = conversational_style_rule(&target_label),
-        spacing = spacing_instruction(&target_label),
-        idiom_rule = idioms_rule(&target_label),
-        examples = json_example_block(&target_label),
-    )
 }
 
 pub fn build_translation_user_prompt(
@@ -192,14 +122,20 @@ pub fn build_translation_user_prompt(
     let target_label = resolve_target_language_label(target_lang);
     let input_items: Vec<serde_json::Value> = bubbles
         .iter()
-        .map(|b| serde_json::json!({ "id": b.id, "text": b.source_text }))
+        .map(|b| {
+            serde_json::json!({
+                "id": b.id,
+                "text": normalize_bubble_text(&b.source_text)
+            })
+        })
         .collect();
 
     format!(
-        "Translate the following comic dialogue items from {} into natural {}:\n{}",
+        "Source: {} | Target: {}\n{}\nItems: {}",
         source_label,
         target_label,
-        serde_json::to_string_pretty(&input_items).unwrap_or_default()
+        target_style_note(&target_label),
+        serde_json::to_string(&input_items).unwrap_or_default()
     )
 }
 
@@ -222,7 +158,7 @@ mod tests {
             oriented_h: 50.0,
             angle_rad: 0.0,
             is_left_aligned: false,
-            source_text: "Hello world".to_string(),
+            source_text: "Hello   world\nagain".to_string(),
             lines: vec![],
         }
     }
@@ -235,31 +171,26 @@ mod tests {
         assert_eq!(resolve_target_language_label("zh"), "Simplified Chinese");
         assert_eq!(resolve_target_language_label("zh-TW"), "Traditional Chinese");
         assert_eq!(resolve_target_language_label("ko"), "Korean");
-        assert_eq!(
-            resolve_source_language_label("auto"),
-            "the automatically detected source language"
-        );
+        assert_eq!(resolve_source_language_label("auto"), "auto-detected source language");
         assert_eq!(resolve_source_language_label("ko"), "Korean");
     }
 
     #[test]
-    fn builds_dynamic_target_and_source_prompts() {
-        let english_prompt = build_scanlation_system_prompt("ja", "en", false);
-        assert!(english_prompt.contains("from Japanese into natural, fluent, and expressive English"));
-        assert!(!english_prompt.contains("Tapi kupikir"));
-        assert!(english_prompt.contains("Natural English translation"));
+    fn keeps_initial_system_prompt_immutable_for_kv_cache() {
+        let sys_cloud = initial_system_prompt(false);
+        let sys_local = initial_system_prompt(true);
+        assert!(sys_cloud.contains("-san"));
+        assert!(sys_cloud.contains("wemust takea waterbucket"));
+        assert!(sys_local.contains("wemust takea waterbucket"));
+        assert_eq!(sys_cloud.as_ptr(), initial_system_prompt(false).as_ptr());
 
-        let indonesian_prompt = build_scanlation_system_prompt("auto", "id", false);
-        assert!(indonesian_prompt.contains("automatically detected source language"));
-        assert!(indonesian_prompt.contains("natural, fluent, and expressive Indonesian"));
-        assert!(indonesian_prompt.contains("aku/kamu"));
+        let user_id = build_translation_user_prompt(&[sample_bubble()], "auto", "id");
+        assert!(user_id.contains("Source: auto-detected source language | Target: Indonesian"));
+        assert!(user_id.contains("aku/kamu"));
+        assert!(user_id.contains("Hello world again"));
 
-        let japanese_local = build_scanlation_system_prompt("en", "ja", true);
-        assert!(japanese_local.contains("from English into natural Japanese"));
-        assert!(japanese_local.contains("without inserting unnatural Latin spacing"));
-
-        let user_prompt = build_translation_user_prompt(&[sample_bubble()], "ko", "es");
-        assert!(user_prompt.contains("from Korean into natural Spanish"));
-        assert!(user_prompt.contains("Hello world"));
+        let user_es = build_translation_user_prompt(&[sample_bubble()], "ko", "es");
+        assert!(user_es.contains("Source: Korean | Target: Spanish"));
+        assert!(!user_es.contains("aku/kamu"));
     }
 }

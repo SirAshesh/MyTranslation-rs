@@ -47,7 +47,12 @@ impl StorageDb {
                 translate_ms_sum = translate_ms_sum + ?6,
                 render_ms_sum = render_ms_sum + ?7,
                 total_ms_sum = total_ms_sum + ?8,
-                last_total_ms = ?8
+                last_total_ms = ?8,
+                prompt_tokens_sum = prompt_tokens_sum + ?9,
+                prompt_cached_tokens_sum = prompt_cached_tokens_sum + ?10,
+                completion_tokens_sum = completion_tokens_sum + ?11,
+                local_cache_hits = local_cache_hits + ?12,
+                local_cache_misses = local_cache_misses + ?13
              WHERE id = 1",
             params![
                 processed_inc,
@@ -57,7 +62,12 @@ impl StorageDb {
                 timings.ocr_ms as i64,
                 timings.translate_ms as i64,
                 timings.render_ms as i64,
-                timings.total_ms as i64
+                timings.total_ms as i64,
+                timings.usage.prompt_tokens as i64,
+                timings.usage.prompt_cached_tokens as i64,
+                timings.usage.completion_tokens as i64,
+                timings.usage.local_cache_hits as i64,
+                timings.usage.local_cache_misses as i64
             ],
         )
         .map_err(|e| format!("Failed to update stats_summary: {}", e))?;
@@ -134,7 +144,9 @@ impl StorageDb {
         stats.summary = conn
             .query_row(
                 "SELECT total_processed, total_requests, total_success, total_errors, total_bubbles,
-                        ocr_ms_sum, translate_ms_sum, render_ms_sum, total_ms_sum, last_total_ms
+                        ocr_ms_sum, translate_ms_sum, render_ms_sum, total_ms_sum, last_total_ms,
+                        prompt_tokens_sum, prompt_cached_tokens_sum, completion_tokens_sum,
+                        local_cache_hits, local_cache_misses
                  FROM stats_summary WHERE id = 1",
                 [],
                 |r| {
@@ -149,6 +161,11 @@ impl StorageDb {
                         render_ms_sum: r.get::<_, i64>(7)?.max(0) as u64,
                         total_ms_sum: r.get::<_, i64>(8)?.max(0) as u64,
                         last_total_ms: r.get::<_, i64>(9)?.max(0) as u64,
+                        prompt_tokens_sum: r.get::<_, i64>(10)?.max(0) as u64,
+                        prompt_cached_tokens_sum: r.get::<_, i64>(11)?.max(0) as u64,
+                        completion_tokens_sum: r.get::<_, i64>(12)?.max(0) as u64,
+                        local_cache_hits: r.get::<_, i64>(13)?.max(0) as u64,
+                        local_cache_misses: r.get::<_, i64>(14)?.max(0) as u64,
                     })
                 },
             )
@@ -253,7 +270,9 @@ impl StorageDb {
             "UPDATE stats_summary SET
                 total_processed = 0, total_requests = 0, total_success = 0, total_errors = 0,
                 total_bubbles = 0, ocr_ms_sum = 0, translate_ms_sum = 0, render_ms_sum = 0,
-                total_ms_sum = 0, last_total_ms = 0
+                total_ms_sum = 0, last_total_ms = 0, prompt_tokens_sum = 0,
+                prompt_cached_tokens_sum = 0, completion_tokens_sum = 0,
+                local_cache_hits = 0, local_cache_misses = 0
              WHERE id = 1;
              DELETE FROM stats_events;
              DELETE FROM stats_timeline;
@@ -335,6 +354,13 @@ mod tests {
                     render_ms: 80,
                     total_ms: 430,
                     bubble_count: 5,
+                    usage: crate::utilities::LlmUsageStats {
+                        prompt_tokens: 400,
+                        prompt_cached_tokens: 300,
+                        completion_tokens: 90,
+                        local_cache_hits: 2,
+                        local_cache_misses: 3,
+                    },
                 },
                 1_700_000_060_000,
             )
@@ -344,6 +370,9 @@ mod tests {
         let loaded = db2.load_stats(24, 20).expect("load stats");
         assert_eq!(loaded.summary.total_requests, 1);
         assert_eq!(loaded.summary.total_bubbles, 5);
+        assert_eq!(loaded.summary.prompt_tokens_sum, 400);
+        assert_eq!(loaded.summary.prompt_cached_tokens_sum, 300);
+        assert_eq!(loaded.summary.local_cache_hits, 2);
         assert_eq!(loaded.recent.len(), 1);
         assert_eq!(loaded.by_model.len(), 1);
         let _ = std::fs::remove_file(&path);

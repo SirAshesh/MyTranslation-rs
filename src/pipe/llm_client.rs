@@ -1,14 +1,24 @@
 use crate::model::{local_server_url, AppConfig, Bubble};
-use crate::pipe::prompts::{build_scanlation_system_prompt, build_translation_user_prompt};
-use crate::utilities::{redact_secrets, resolve_claude_url, resolve_openai_url};
+use crate::pipe::llm_wire::{
+    extract_claude_usage, extract_openai_usage, parse_translation_json, ChatMessage,
+    ClaudeCacheControl, ClaudeCachedMessageRequest, ClaudeMessageRequest, ClaudeMessageResponse,
+    ClaudeSystemBlock, OpenAiChatRequest, OpenAiChatResponse, ResponseFormat,
+};
+use crate::pipe::prompts::{build_translation_user_prompt, initial_system_prompt};
+use crate::utilities::{redact_secrets, resolve_claude_url, resolve_openai_url, LlmUsageStats};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
 #[derive(Clone)]
 pub struct LlmClient {
     client: Client,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LlmTranslationOutput {
+    pub translations: HashMap<usize, String>,
+    pub usage: LlmUsageStats,
 }
 
 struct ChatEndpoint {
@@ -19,72 +29,6 @@ struct ChatEndpoint {
     is_local: bool,
     temperature: f32,
     unreachable_hint: &'static str,
-}
-
-#[derive(Serialize)]
-struct OpenAiChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-    max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Serialize)]
-struct ResponseFormat {
-    r#type: String,
-}
-
-#[derive(Deserialize)]
-struct OpenAiChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatResponseMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatResponseMessage {
-    content: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ClaudeMessageRequest {
-    model: String,
-    max_tokens: u32,
-    system: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-}
-
-#[derive(Deserialize)]
-struct ClaudeMessageResponse {
-    content: Vec<ClaudeContentBlock>,
-}
-
-#[derive(Deserialize)]
-struct ClaudeContentBlock {
-    text: String,
-}
-
-#[derive(Deserialize)]
-struct TranslationWrapper {
-    translations: Vec<TranslationItem>,
-}
-
-#[derive(Deserialize)]
-struct TranslationItem {
-    id: usize,
-    target: String,
 }
 
 fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
@@ -115,47 +59,6 @@ fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
         temperature: 0.3,
         unreachable_hint: "",
     })
-}
-
-fn strip_reasoning_block(raw_content: &str) -> &str {
-    match raw_content.rfind("</think>") {
-        Some(end) => &raw_content[end + "</think>".len()..],
-        None => raw_content,
-    }
-}
-
-fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
-    let mut translation_map = HashMap::new();
-    let trimmed = strip_reasoning_block(raw_content)
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
-
-    if let Ok(wrapper) = serde_json::from_str::<TranslationWrapper>(trimmed) {
-        for item in wrapper.translations {
-            translation_map.insert(item.id, item.target);
-        }
-        return translation_map;
-    }
-
-    if let Ok(items) = serde_json::from_str::<Vec<TranslationItem>>(trimmed) {
-        for item in items {
-            translation_map.insert(item.id, item.target);
-        }
-        return translation_map;
-    }
-
-    if let Ok(obj) = serde_json::from_str::<HashMap<String, serde_json::Value>>(trimmed) {
-        for (k, v) in obj {
-            if let (Ok(id), Some(s)) = (k.parse::<usize>(), v.as_str()) {
-                translation_map.insert(id, s.to_string());
-            }
-        }
-    }
-
-    translation_map
 }
 
 impl LlmClient {
@@ -259,7 +162,7 @@ impl LlmClient {
         label: &str,
         unreachable_hint: &str,
         timeout_secs: u64,
-    ) -> Result<HashMap<usize, String>, (Option<u16>, String)> {
+    ) -> Result<LlmTranslationOutput, (Option<u16>, String)> {
         let request = OpenAiChatRequest {
             model: model.to_string(),
             messages: vec![
@@ -282,18 +185,22 @@ impl LlmClient {
         let chat_response = self
             .send_chat(url, api_key, label, unreachable_hint, timeout_secs, &request)
             .await?;
+        let usage = extract_openai_usage(&chat_response);
         let raw_content = chat_response
             .choices
             .first()
             .and_then(|choice| choice.message.content.as_deref())
             .unwrap_or_default();
 
-        Ok(parse_translation_json(raw_content))
+        Ok(LlmTranslationOutput {
+            translations: parse_translation_json(raw_content),
+            usage,
+        })
     }
 
     #[cfg(feature = "free-mode")]
-    pub(crate) fn comic_system_prompt(&self, source_lang: &str, target_lang: &str) -> String {
-        build_scanlation_system_prompt(source_lang, target_lang, false)
+    pub(crate) fn comic_system_prompt(&self) -> &'static str {
+        initial_system_prompt(false)
     }
 
     pub async fn test_connection_chat(&self, cfg: &AppConfig) -> Result<String, String> {
@@ -317,15 +224,14 @@ impl LlmClient {
         bubbles: &[Bubble],
         source_lang: &str,
         target_lang: &str,
-    ) -> Result<HashMap<usize, String>, String> {
+    ) -> Result<LlmTranslationOutput, String> {
         let endpoint = resolve_chat_endpoint(cfg)?;
-        let system_prompt =
-            build_scanlation_system_prompt(source_lang, target_lang, endpoint.is_local);
+        let system_prompt = initial_system_prompt(endpoint.is_local);
         self.send_openai_compatible_translation(
             &endpoint.url,
             endpoint.api_key.as_deref(),
             &endpoint.model,
-            &system_prompt,
+            system_prompt,
             endpoint.temperature,
             bubbles,
             source_lang,
@@ -388,8 +294,9 @@ impl LlmClient {
         bubbles: &[Bubble],
         source_lang: &str,
         target_lang: &str,
-    ) -> Result<HashMap<usize, String>, String> {
-        if cfg.claude_api_key.trim().is_empty() {
+    ) -> Result<LlmTranslationOutput, String> {
+        let api_key = cfg.claude_api_key.trim();
+        if api_key.is_empty() {
             return Err("Claude API key is not configured. Open Settings in the web interface to add your key.".to_string());
         }
 
@@ -400,27 +307,63 @@ impl LlmClient {
             cfg.claude_model.trim().to_string()
         };
 
-        let req_body = ClaudeMessageRequest {
-            model,
+        let system_prompt = initial_system_prompt(false);
+        let user_messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: build_translation_user_prompt(bubbles, source_lang, target_lang),
+        }];
+
+        let cached_req = ClaudeCachedMessageRequest {
+            model: &model,
             max_tokens: 2048,
-            system: build_scanlation_system_prompt(source_lang, target_lang, false),
-            messages: vec![ChatMessage {
-                role: "user".to_string(),
-                content: build_translation_user_prompt(bubbles, source_lang, target_lang),
+            system: vec![ClaudeSystemBlock {
+                block_type: "text",
+                text: system_prompt,
+                cache_control: ClaudeCacheControl {
+                    control_type: "ephemeral",
+                },
             }],
+            messages: &user_messages,
             temperature: 0.3,
         };
 
-        let resp = self
+        let mut resp = self
             .client
             .post(&url)
-            .header("x-api-key", cfg.claude_api_key.trim())
+            .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json")
-            .json(&req_body)
+            .json(&cached_req)
             .send()
             .await
             .map_err(|e| format!("Claude request error: {}", e))?;
+
+        if resp.status().as_u16() == 400 {
+            let err_body = resp.text().await.unwrap_or_default();
+            if err_body.to_ascii_lowercase().contains("system")
+                || err_body.to_ascii_lowercase().contains("cache_control")
+            {
+                let plain_req = ClaudeMessageRequest {
+                    model,
+                    max_tokens: 2048,
+                    system: system_prompt.to_string(),
+                    messages: user_messages,
+                    temperature: 0.3,
+                };
+                resp = self
+                    .client
+                    .post(&url)
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("Content-Type", "application/json")
+                    .json(&plain_req)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Claude request error: {}", e))?;
+            } else {
+                return Err(format!("Claude endpoint returned HTTP 400: {}", err_body));
+            }
+        }
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -433,12 +376,16 @@ impl LlmClient {
             .await
             .map_err(|e| format!("Failed to parse Claude response JSON: {}", e))?;
 
+        let usage = extract_claude_usage(claude_res.usage.as_ref());
         let raw_content = claude_res
             .content
             .first()
             .map(|c| c.text.as_str())
             .unwrap_or_default();
 
-        Ok(parse_translation_json(raw_content))
+        Ok(LlmTranslationOutput {
+            translations: parse_translation_json(raw_content),
+            usage,
+        })
     }
 }

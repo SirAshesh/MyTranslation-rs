@@ -1,16 +1,70 @@
 use crate::model::{AppConfig, Bubble, SaveSettingsForm, TestKeyRequest};
-use super::llm_client::LlmClient;
+use super::llm_client::{LlmClient, LlmTranslationOutput};
 use super::local_runtime::LocalRuntime;
-use std::collections::HashMap;
+use super::prompts::{
+    normalize_bubble_text, resolve_source_language_label, resolve_target_language_label,
+};
+use crate::utilities::LlmUsageStats;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
+
+const MAX_TRANSLATION_CACHE_ENTRIES: usize = 2048;
+
+#[derive(Default)]
+struct TranslationCache {
+    entries: HashMap<String, String>,
+    order: VecDeque<String>,
+}
+
+impl TranslationCache {
+    fn get(&self, key: &str) -> Option<&String> {
+        self.entries.get(key)
+    }
+
+    fn insert(&mut self, key: String, value: String) {
+        if self.entries.contains_key(&key) {
+            self.entries.insert(key, value);
+            return;
+        }
+        if self.order.len() >= MAX_TRANSLATION_CACHE_ENTRIES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.entries.insert(key, value);
+    }
+}
+
+fn is_non_lexical_bubble(text: &str) -> bool {
+    !text.chars().any(|c| c.is_alphanumeric())
+}
+
+fn cache_namespace(cfg: &AppConfig, source_lang: &str, target_lang: &str) -> String {
+    let model = match cfg.translation_mode.as_str() {
+        "claude" => cfg.claude_model.trim(),
+        "local" => cfg.local_model.trim(),
+        #[cfg(feature = "free-mode")]
+        "free" => cfg.free.free_provider.trim(),
+        _ => cfg.openai_model.trim(),
+    };
+    format!(
+        "{}:{}:{}:{}",
+        cfg.translation_mode.trim(),
+        model,
+        resolve_source_language_label(source_lang),
+        resolve_target_language_label(target_lang)
+    )
+}
 
 #[derive(Clone)]
 pub struct Translator {
     client: LlmClient,
     config: Arc<RwLock<AppConfig>>,
     pub runtime: LocalRuntime,
+    translation_cache: Arc<Mutex<TranslationCache>>,
     #[cfg(feature = "free-mode")]
     free_cache: crate::pipe::free_mode::FreeRouterCache,
 }
@@ -21,6 +75,7 @@ impl Translator {
             client: LlmClient::new(),
             config: Arc::new(RwLock::new(initial_config)),
             runtime: LocalRuntime::new(local_data_dir),
+            translation_cache: Arc::new(Mutex::new(TranslationCache::default())),
             #[cfg(feature = "free-mode")]
             free_cache: crate::pipe::free_mode::FreeRouterCache::new(),
         }
@@ -157,13 +212,54 @@ impl Translator {
         bubbles: &[Bubble],
         source_lang: &str,
         target_lang: &str,
-    ) -> Result<HashMap<usize, String>, String> {
+    ) -> Result<LlmTranslationOutput, String> {
         let cfg = self.get_config().await;
-        match cfg.translation_mode.as_str() {
+        let namespace = cache_namespace(&cfg, source_lang, target_lang);
+        let mut resolved = HashMap::with_capacity(bubbles.len());
+        let mut uncached = Vec::new();
+        let mut uncached_keys = Vec::new();
+        let mut local_hits: u64 = 0;
+
+        {
+            let cache_guard = self
+                .translation_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for bubble in bubbles {
+                let normalized = normalize_bubble_text(&bubble.source_text);
+                if normalized.is_empty() || is_non_lexical_bubble(&normalized) {
+                    resolved.insert(bubble.id, bubble.source_text.clone());
+                    local_hits += 1;
+                    continue;
+                }
+                let cache_key = format!("{}|{}", namespace, normalized);
+                if let Some(cached) = cache_guard.get(&cache_key) {
+                    resolved.insert(bubble.id, cached.clone());
+                    local_hits += 1;
+                } else {
+                    uncached.push(bubble.clone());
+                    uncached_keys.push((bubble.id, cache_key));
+                }
+            }
+        }
+
+        let local_misses = uncached.len() as u64;
+        if uncached.is_empty() {
+            return Ok(LlmTranslationOutput {
+                translations: resolved,
+                usage: LlmUsageStats {
+                    local_cache_hits: local_hits,
+                    local_cache_misses: 0,
+                    ..LlmUsageStats::default()
+                },
+            });
+        }
+
+        let mut llm_output = match cfg.translation_mode.as_str() {
             "claude" => {
                 self.client
-                    .translate_claude(&cfg, bubbles, source_lang, target_lang)
-                    .await
+                    .translate_claude(&cfg, &uncached, source_lang, target_lang)
+                    .await?
             }
             #[cfg(feature = "free-mode")]
             "free" => {
@@ -171,17 +267,57 @@ impl Translator {
                     &self.client,
                     &self.free_cache,
                     &cfg.free,
-                    bubbles,
+                    &uncached,
                     source_lang,
                     target_lang,
                 )
-                .await
+                .await?
             }
             _ => {
                 self.client
-                    .translate_chat(&cfg, bubbles, source_lang, target_lang)
-                    .await
+                    .translate_chat(&cfg, &uncached, source_lang, target_lang)
+                    .await?
+            }
+        };
+
+        {
+            let mut cache_guard = self
+                .translation_cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            for (bubble_id, cache_key) in uncached_keys {
+                if let Some(translated) = llm_output.translations.remove(&bubble_id) {
+                    let trimmed = translated.trim();
+                    if !trimmed.is_empty() {
+                        cache_guard.insert(cache_key, translated.clone());
+                    }
+                    resolved.insert(bubble_id, translated);
+                }
             }
         }
+
+        llm_output.usage.local_cache_hits = local_hits;
+        llm_output.usage.local_cache_misses = local_misses;
+
+        Ok(LlmTranslationOutput {
+            translations: resolved,
+            usage: llm_output.usage,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_lexical_and_cache_eviction_work_cleanly() {
+        assert!(is_non_lexical_bubble("..."));
+        assert!(is_non_lexical_bubble("?!"));
+        assert!(!is_non_lexical_bubble("Wait?!"));
+
+        let mut cache = TranslationCache::default();
+        cache.insert("k1".to_string(), "v1".to_string());
+        assert_eq!(cache.get("k1").map(String::as_str), Some("v1"));
     }
 }
