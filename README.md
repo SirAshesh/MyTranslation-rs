@@ -5,7 +5,7 @@
 ![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)
 ![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
 
-![MyTranslation-rs Preview](sample/preview.gif)
+[![MyTranslation-rs Preview](sample/preview.gif)](https://id.pinterest.com/pin/1005569423056533419/)
 
 A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device LLMs (LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
 
