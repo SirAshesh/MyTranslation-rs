@@ -12,6 +12,8 @@ local/
 models/
 *.png
 !extension/**/*.png
+!sample/raw.png
+!sample/translated.png
 *.webp
 src/frontend/free
 src/pipe/free_mode

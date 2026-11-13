@@ -247,3 +247,4 @@ mod tests {
         assert_eq!(claude_stats.completion_tokens, 20);
     }
 }
+

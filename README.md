@@ -1,6 +1,13 @@
 # MyTranslation-rs
-A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device LLMs (LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
 
+[![Release](https://img.shields.io/github/v/release/SirAshesh/MyTranslation-rs?display_name=tag)](https://github.com/SirAshesh/MyTranslation-rs/releases)
+[![Last Commit](https://img.shields.io/github/last-commit/SirAshesh/MyTranslation-rs)](https://github.com/SirAshesh/MyTranslation-rs/commits/main)
+![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange?logo=rust)
+![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-blue)
+
+![MyTranslation-rs Preview](sample/preview.gif)
+
+A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device LLMs (LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
 
 ## Key Features
 - **Cross-Platform**: Runs natively on both **Windows 10/11 (x64)** and **Linux / Ubuntu (x64)**.
@@ -13,14 +20,13 @@ A fast, lightweight, and native Rust translation and typesetting server for mang
 
 ## Sample
 
-<video src="sample/Sample.mp4" controls="controls" muted="muted" width="100%"></video>
+| RAW | Translated |
+| :--- | :--- |
+| ![RAW Sample](sample/raw.png) | ![Translated Sample](sample/translated.png) |
 
-[Sample.mp4](./sample/Sample.mp4)
-
----
+Source: https://id.pinterest.com/pin/614600680437863284/
 
 ## Quick Start (Prebuilt Release)
-
 ### Windows (x64)
 
 1. Download `ImageTrans-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
@@ -108,6 +114,9 @@ cargo build --release
 - **Windows binary**: `target/release/server-rs.exe` (requires `DirectML.dll` from the target folder).
 - **Linux binary**: `target/release/server-rs`.
 
-## License
+## Credit
+- xulihang / [ImageTrans Chrome Extension](https://github.com/xulihang/ImageTrans_chrome_extension)
+- koharu-rs / [Koharu](https://github.com/koharu-rs/koharu)
 
+## License
 MIT License.
