@@ -2,17 +2,26 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
+    paths-ignore:
+      - 'README.md'
+      - 'sample/**'
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version tag (e.g. v0.1.0)'
+        description: 'Release version tag (e.g. v0.2.0 or latest)'
         required: false
-        default: 'v0.1.0'
+        default: 'latest'
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
@@ -30,12 +39,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --no-default-features --bin server-rs
 
       - name: Package Windows Release
         shell: pwsh
         run: |
-          $distDir = "staging/ImageTrans-rs"
+          $distDir = "staging/MyTranslation-rs"
           New-Item -ItemType Directory -Force -Path "$distDir/fonts" | Out-Null
           New-Item -ItemType Directory -Force -Path "$distDir/models" | Out-Null
 
@@ -70,14 +79,14 @@ jobs:
             Invoke-WebRequest -Uri $m.url -OutFile $dest -UseBasicParsing
           }
 
-          Compress-Archive -Path "$distDir" -DestinationPath "ImageTrans-rs-windows-x64.zip" -CompressionLevel Optimal
-          Write-Host "Successfully packaged ImageTrans-rs-windows-x64.zip"
+          Compress-Archive -Path "$distDir" -DestinationPath "MyTranslation-rs-windows-x64.zip" -CompressionLevel Optimal
+          Write-Host "Successfully packaged MyTranslation-rs-windows-x64.zip"
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-artifact
-          path: ImageTrans-rs-windows-x64.zip
+          path: MyTranslation-rs-windows-x64.zip
 
   build-ubuntu:
     name: Build & Package (Ubuntu x64)
@@ -99,11 +108,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --no-default-features --bin server-rs
 
       - name: Package Ubuntu Release
         run: |
-          DIST_DIR="staging/ImageTrans-rs"
+          DIST_DIR="staging/MyTranslation-rs"
           mkdir -p "$DIST_DIR/fonts" "$DIST_DIR/models"
 
           cp target/release/server-rs "$DIST_DIR/server-rs"
@@ -119,46 +128,97 @@ jobs:
           curl -sSL -o "$DIST_DIR/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.0/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
           curl -sSL -o "$DIST_DIR/models/en_dict.txt" "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/paddle/PP-OCRv4/rec/en_PP-OCRv4_rec_mobile/en_dict.txt"
 
-          tar -czf ImageTrans-rs-ubuntu-x64.tar.gz -C staging ImageTrans-rs
-          ls -lh ImageTrans-rs-ubuntu-x64.tar.gz
+          tar -czf MyTranslation-rs-ubuntu-x64.tar.gz -C staging MyTranslation-rs
+          ls -lh MyTranslation-rs-ubuntu-x64.tar.gz
 
       - name: Upload Ubuntu Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ubuntu-artifact
-          path: ImageTrans-rs-ubuntu-x64.tar.gz
+          path: MyTranslation-rs-ubuntu-x64.tar.gz
+
+  package-extensions:
+    name: Package Browser Extensions
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Zip Chrome & Firefox Extensions Separately
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y zip
+          (cd extension/chrome && zip -r ../../chrome-extension.zip .)
+          (cd extension/firefox && zip -r ../../firefox-extension.zip .)
+          ls -lh chrome-extension.zip firefox-extension.zip
+
+      - name: Upload Chrome Extension Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chrome-extension-artifact
+          path: chrome-extension.zip
+
+      - name: Upload Firefox Extension Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firefox-extension-artifact
+          path: firefox-extension.zip
 
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-windows, build-ubuntu]
+    needs: [build-windows, build-ubuntu, package-extensions]
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all release artifacts
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
 
-      - name: Resolve Release Tag
+      - name: Resolve Release Tag & Mode
         id: resolve_tag
         run: |
           if [ "${{ github.ref_type }}" = "tag" ] && [ -n "${{ github.ref_name }}" ]; then
             TAG="${{ github.ref_name }}"
-          elif [ -n "${{ inputs.version }}" ]; then
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
             TAG="${{ inputs.version }}"
           else
-            TAG="v0.1.0"
+            TAG="latest"
           fi
+
+          if [ "$TAG" = "latest" ]; then
+            RELEASE_NAME="MyTranslation-rs Latest Build"
+            IS_PRERELEASE="true"
+            MAKE_LATEST="false"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -f latest
+            git push -f origin latest
+          else
+            RELEASE_NAME="MyTranslation-rs $TAG"
+            IS_PRERELEASE="false"
+            MAKE_LATEST="true"
+          fi
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "make_latest=$MAKE_LATEST" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.resolve_tag.outputs.tag }}
-          name: ImageTrans-rs ${{ steps.resolve_tag.outputs.tag }}
+          name: ${{ steps.resolve_tag.outputs.name }}
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.resolve_tag.outputs.prerelease }}
+          make_latest: ${{ steps.resolve_tag.outputs.make_latest }}
           files: |
-            ImageTrans-rs-windows-x64.zip
-            ImageTrans-rs-ubuntu-x64.tar.gz
+            MyTranslation-rs-windows-x64.zip
+            MyTranslation-rs-ubuntu-x64.tar.gz
+            chrome-extension.zip
+            firefox-extension.zip
           generate_release_notes: true

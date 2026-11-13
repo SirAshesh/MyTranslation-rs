@@ -2,17 +2,17 @@
 set -e
 
 REPO="${REPO:-SirAshesh/MyTranslation-rs}"
-ASSET_NAME="ImageTrans-rs-ubuntu-x64.tar.gz"
+ASSET_NAME="MyTranslation-rs-ubuntu-x64.tar.gz"
 WORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$WORK_DIR"
 
-echo "=== ImageTrans-rs Deployment & Update Runner ==="
+echo "=== MyTranslation-rs Deployment & Update Runner ==="
 echo "Working directory: $WORK_DIR"
 
 # Verify system architecture
 ARCH=$(uname -m)
 if [ "$ARCH" != "x86_64" ]; then
-    echo "Warning: ImageTrans-rs release binary is built for x86_64, but system is $ARCH."
+    echo "Warning: MyTranslation-rs release binary is built for x86_64, but system is $ARCH."
 fi
 
 # Ensure basic utilities exist
@@ -96,6 +96,6 @@ if [ ! -x "./server-rs" ]; then
     exit 1
 fi
 
-echo "Starting ImageTrans-rs server..."
+echo "Starting MyTranslation-rs server..."
 exec ./server-rs "$@"
 

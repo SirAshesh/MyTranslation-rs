@@ -16,7 +16,7 @@ A fast, lightweight, and native Rust translation and typesetting server for mang
 - **Flexible Translation Backends**:
   - **Local Model**: 1-click built-in download and execution of LiquidAI LFM3 1.7B with automatic GPU detection (NVIDIA CUDA, AMD/Intel Vulkan, or CPU).
   - **Cloud APIs**: OpenAI-compatible (DeepSeek, OpenAI, OpenRouter) and Claude-compatible endpoints.
-- **ImageTrans Extension Ready**: Direct compatibility with the ImageTrans Chrome/Firefox browser extension.
+- **Browser Extension Ready**: Includes standalone **MyTranslation** extensions for Chrome (`chrome-extension.zip`) and Firefox (`firefox-extension.zip`).
 
 ## Sample
 
@@ -29,7 +29,7 @@ Source: https://id.pinterest.com/pin/614600680437863284/
 ## Quick Start (Prebuilt Release)
 ### Windows (x64)
 
-1. Download `ImageTrans-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
+1. Download `MyTranslation-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
 2. Extract the archive into a folder.
 3. Run `server-rs.exe`.
 4. Open your browser at `http://127.0.0.1:5000`.
@@ -47,13 +47,13 @@ chmod +x run.sh
 The script automatically detects updates from GitHub Releases, downloads missing binaries/models, and launches the server.
 
 Alternatively, for manual installation:
-1. Download `ImageTrans-rs-ubuntu-x64.tar.gz` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
+1. Download `MyTranslation-rs-ubuntu-x64.tar.gz` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
 2. Extract the archive:
    ```bash
-   tar -xzf ImageTrans-rs-ubuntu-x64.tar.gz
-   cd ImageTrans-rs
+   tar -xzf MyTranslation-rs-ubuntu-x64.tar.gz
+   cd MyTranslation-rs
    chmod +x server-rs run.sh
-   ./server-rs
+   ./run.sh
    ```
 3. Open `http://127.0.0.1:5000` in your browser.
 
@@ -79,16 +79,15 @@ Settings are saved in `config.json` in the application directory:
 - **Web Dashboard**: Navigate to `http://127.0.0.1:5000` to adjust settings, check detected GPU hardware, and download local models directly from the UI.
 - **Port**: Customize the listening port by modifying `"port"` in `config.json` or passing `PORT=5000 ./server-rs`.
 
-## Connecting the ImageTrans Browser Extension
+## Connecting the Browser Extension
 
-1. In Chrome/Brave/Edge, open the **ImageTrans** extension options.
-2. Under **Translation Mode**, select `ImageTrans (local or remote server)`.
-3. Set the **Server URL** to:
+1. For **MyTranslation Extension**, download `chrome-extension.zip` (Chrome/Brave/Edge) or `firefox-extension.zip` (Firefox) from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page and load the unpacked folder (or use `extension/chrome` / `extension/firefox` from this repo).
+2. Open the **ImageTrans Extension or MyTranslation Extension** options and set the **Server URL** to:
    ```
    http://127.0.0.1:5000
    ```
-4. Click **Check** to verify connectivity (returns `[{"name":"MyTranslation","displayName":"default","running":false}]`).
-5. Save your settings. Now you can capture and translate manga pages directly in your browser.
+3. If using ImageTrans, set **Translation Mode** to `ImageTrans (local or remote server)`. Click **Test Connection** / **Check** to verify connectivity.
+4. Save your settings. Now you can capture and translate comic, manga, or webtoon pages directly in your browser.
 
 
 ## Building from Source
