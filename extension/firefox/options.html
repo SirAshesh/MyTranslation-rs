@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyTranslation Options</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <header class="page-header">
+    <img src="icons/icon48.png" alt="MyTranslation" class="logo">
+    <div>
+      <h1>MyTranslation Extension Options</h1>
+      <p>Connect your Chrome or Firefox browser to your local or remote MyTranslation server.</p>
+    </div>
+  </header>
+
+  <main class="cards">
+    <section class="card">
+      <h2>Server Connection</h2>
+      <div class="field-row">
+        <label for="server-url">Server URL</label>
+        <div class="input-group">
+          <input id="server-url" type="text" placeholder="http://127.0.0.1:5000">
+          <button id="test-conn" type="button" class="btn-secondary">Test Connection</button>
+        </div>
+        <span id="conn-result" class="hint-status"></span>
+      </div>
+
+      <label class="checkbox-row">
+        <input id="send-bg" type="checkbox">
+        <span>Send network requests via background script (recommended to bypass page CSP/CORS blocks)</span>
+      </label>
+    </section>
+
+    <section class="card">
+      <h2>Translation Languages</h2>
+      <div class="grid-two">
+        <div class="field-row">
+          <label for="source-lang">Source Language</label>
+          <select id="source-lang"></select>
+        </div>
+        <div class="field-row">
+          <label for="target-lang">Target Language</label>
+          <select id="target-lang"></select>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Image Capture and Behavior</h2>
+      <div class="field-row">
+        <label for="picking-way">Pick image from</label>
+        <select id="picking-way">
+          <option value="1">Center of the Screen (Recommended for Popup)</option>
+          <option value="0">Behind Mouse Cursor</option>
+        </select>
+      </div>
+
+      <label class="checkbox-row">
+        <input id="use-canvas" type="checkbox">
+        <span>Use Canvas to export image data before falling back to background download</span>
+      </label>
+
+      <label class="checkbox-row">
+        <input id="show-floating-btn" type="checkbox">
+        <span>Show draggable quick-translate floating button on web pages</span>
+      </label>
+    </section>
+
+    <div class="actions-bar">
+      <button id="reset-btn" type="button" class="btn-secondary">Reset Defaults</button>
+      <div class="actions-right">
+        <span id="save-status" class="save-status" hidden>Saved</span>
+        <button id="save-btn" type="button" class="btn-primary">Save Settings</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>
+

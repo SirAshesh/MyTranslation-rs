@@ -1,0 +1,68 @@
+<main class="login-shell">
+    <section class="panel-box login-card" aria-labelledby="login-title">
+        <div class="login-brand">
+            <h1 id="login-title">MyTranslation</h1>
+            <p>Your lovely automate translation</p>
+        </div>
+        <form id="login-form" autocomplete="on">
+            <div class="field">
+                <label for="login-user">Username</label>
+                <input type="text" id="login-user" name="username" autocomplete="username" required autofocus />
+            </div>
+            <div class="field">
+                <label for="login-pass">Password</label>
+                <input type="password" id="login-pass" name="password" autocomplete="current-password" required />
+            </div>
+            <div id="login-error" class="status-banner" data-state="err" hidden></div>
+            <button type="submit" class="btn-primary login-submit" id="login-submit">Sign in</button>
+        </form>
+    </section>
+</main>
+<script>
+(function () {
+    try {
+        const savedTheme = localStorage.getItem("mytranslation_theme");
+        if (savedTheme === "light" || savedTheme === "dark") {
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        }
+    } catch (_) {}
+
+    const form = document.getElementById("login-form");
+    const userEl = document.getElementById("login-user");
+    const passEl = document.getElementById("login-pass");
+    const btn = document.getElementById("login-submit");
+    const errBox = document.getElementById("login-error");
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+        btn.disabled = true;
+        btn.textContent = "Signing in...";
+
+        try {
+            const res = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    username: userEl.value.trim(),
+                    password: passEl.value
+                })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                window.location.href = "/";
+                return;
+            }
+            errBox.textContent = "[ERROR] " + (data.message || "Invalid username or password.");
+            errBox.hidden = false;
+        } catch (err) {
+            errBox.textContent = "[ERROR] Login request failed: " + err.message;
+            errBox.hidden = false;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Sign in";
+        }
+    });
+})();
+</script>
+

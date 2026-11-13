@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MyTranslation</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="popup-header">
+    <div class="brand">
+      <img src="icons/icon48.png" alt="MyTranslation" class="brand-icon">
+      <span class="brand-name">MyTranslation</span>
+    </div>
+    <span id="server-status" class="status-pill status-checking" title="Local server status">Checking</span>
+  </header>
+
+  <section class="lang-bar">
+    <select id="source-lang" aria-label="Source language"></select>
+    <span class="lang-arrow">-&gt;</span>
+    <select id="target-lang" aria-label="Target language"></select>
+  </section>
+
+  <main class="action-list">
+    <button id="translate" class="action-btn action-primary">Translate</button>
+    <button id="alterlanguage" class="action-btn">Alter Source/Target</button>
+    <button id="translate-check" class="action-btn">Translate (check image top)</button>
+    <button id="alterlanguage-check" class="action-btn">Alter Source/Target (check image top)</button>
+    <button id="getimgsrc" class="action-btn">Get Image Src</button>
+    <button id="getimgsrc-check" class="action-btn">Get Image Src (check image top)</button>
+    <button id="auto-translate" class="action-btn">Start Auto Translating</button>
+    <button id="screen-capture" class="action-btn">Screen Capture OCR</button>
+  </main>
+
+  <p id="popup-error" class="popup-error" hidden></p>
+
+  <footer class="popup-footer">
+    <a id="open-options" href="#">Options</a>
+    <a id="open-dashboard" href="#">Dashboard</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+

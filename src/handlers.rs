@@ -4,27 +4,51 @@ use axum::response::{Html, IntoResponse, Response};
 use crate::frontend::render_dashboard_html;
 use crate::model::*;
 use crate::pipe::Pipeline;
-use crate::utilities::{extract_image_bytes, get_hardware_info, mask_secret};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use crate::utilities::{
+    extract_image_bytes, get_hardware_info, mask_secret, PipelineTimings, StatsSnapshot,
+    StatsTracker, StorageDb,
+};
 use std::sync::Arc;
 use tracing::{error, info};
 
 pub struct AppState {
     pub pipeline: Pipeline,
-    pub total_processed: AtomicUsize,
+    pub stats: StatsTracker,
+    pub storage: StorageDb,
     pub config_path: String,
+}
+
+async fn record_translation_event(
+    state: &AppState,
+    endpoint: &str,
+    success: bool,
+    timings: PipelineTimings,
+) {
+    let provider_label = state.pipeline.translator.active_provider_label().await;
+    state
+        .stats
+        .record(endpoint, &provider_label, success, timings);
 }
 
 pub async fn dashboard_handler() -> Html<String> {
     Html(render_dashboard_html())
 }
 
-fn build_settings_response(
+async fn build_settings_response(
+    state: &AppState,
     cfg: AppConfig,
     active_configured: bool,
     success: bool,
     message: String,
 ) -> SettingsResponse {
+    #[cfg(feature = "free-mode")]
+    let free = {
+        let active_summary = state.pipeline.translator.free_active_summary(&cfg).await;
+        cfg.free.to_response(active_summary)
+    };
+    #[cfg(not(feature = "free-mode"))]
+    let _ = state;
+
     SettingsResponse {
         success,
         message,
@@ -39,6 +63,8 @@ fn build_settings_response(
         claude_base_url: cfg.claude_base_url,
         claude_model: cfg.claude_model,
         local_model: cfg.local_model,
+        #[cfg(feature = "free-mode")]
+        free,
         active_configured,
     }
 }
@@ -46,7 +72,16 @@ fn build_settings_response(
 pub async fn get_settings_handler(State(state): State<Arc<AppState>>) -> Json<SettingsResponse> {
     let cfg = state.pipeline.translator.get_config().await;
     let active_configured = state.pipeline.translator.is_active_configured().await;
-    Json(build_settings_response(cfg, active_configured, true, "Settings loaded.".to_string()))
+    Json(
+        build_settings_response(
+            &state,
+            cfg,
+            active_configured,
+            true,
+            "Settings loaded.".to_string(),
+        )
+        .await,
+    )
 }
 
 pub async fn save_settings_handler(
@@ -67,7 +102,9 @@ pub async fn save_settings_handler(
         ),
         Err(e) => (false, format!("Failed to write config.json: {}", e)),
     };
-    Json(build_settings_response(updated_cfg, active_configured, success, message))
+    Json(
+        build_settings_response(&state, updated_cfg, active_configured, success, message).await,
+    )
 }
 
 pub async fn hardware_handler(Query(query): Query<HardwareQuery>) -> Response {
@@ -122,6 +159,39 @@ pub async fn test_key_handler(
     }
 }
 
+#[cfg(feature = "free-mode")]
+pub async fn free_models_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<crate::pipe::free_mode::FreeModelsRequest>,
+) -> Json<crate::pipe::free_mode::FreeModelsResponse> {
+    match state
+        .pipeline
+        .translator
+        .fetch_free_models(&req.provider, &req.api_key)
+        .await
+    {
+        Ok((models, evicted_count)) => {
+            let suffix = if evicted_count > 0 {
+                format!(" ({} evicted unavailable model(s) filtered out)", evicted_count)
+            } else {
+                String::new()
+            };
+            Json(crate::pipe::free_mode::FreeModelsResponse {
+                success: true,
+                provider: req.provider.clone(),
+                message: format!("Loaded {} models for {}.{}", models.len(), req.provider, suffix),
+                models,
+            })
+        }
+        Err(message) => Json(crate::pipe::free_mode::FreeModelsResponse {
+            success: false,
+            provider: req.provider,
+            models: Vec::new(),
+            message,
+        }),
+    }
+}
+
 pub async fn translate_text_handler(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<TextTranslateRequest>,
@@ -148,8 +218,14 @@ pub async fn translate_text_handler(
         y1: 0.0,
         x2: 0.0,
         y2: 0.0,
+        cx: 0.0,
+        cy: 0.0,
         w: 0.0,
         h: 0.0,
+        oriented_w: 0.0,
+        oriented_h: 0.0,
+        angle_rad: 0.0,
+        is_left_aligned: false,
         source_text: text.to_string(),
         lines: vec![],
     };
@@ -161,6 +237,20 @@ pub async fn translate_text_handler(
         .await
     {
         Ok(map) => {
+            let elapsed_ms = t0.elapsed().as_millis();
+            record_translation_event(
+                &state,
+                "text",
+                true,
+                PipelineTimings {
+                    ocr_ms: 0,
+                    translate_ms: elapsed_ms as u64,
+                    render_ms: 0,
+                    total_ms: elapsed_ms as u64,
+                    bubble_count: 1,
+                },
+            )
+            .await;
             let target = map
                 .get(&1)
                 .cloned()
@@ -169,22 +259,38 @@ pub async fn translate_text_handler(
                 success: true,
                 source: text.to_string(),
                 target,
-                elapsed_ms: t0.elapsed().as_millis(),
+                elapsed_ms,
                 message: None,
             })
             .into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(TextTranslateResponse {
-                success: false,
-                source: text.to_string(),
-                target: String::new(),
-                elapsed_ms: t0.elapsed().as_millis(),
-                message: Some(e),
-            }),
-        )
-            .into_response(),
+        Err(e) => {
+            let elapsed_ms = t0.elapsed().as_millis();
+            record_translation_event(
+                &state,
+                "text",
+                false,
+                PipelineTimings {
+                    ocr_ms: 0,
+                    translate_ms: elapsed_ms as u64,
+                    render_ms: 0,
+                    total_ms: elapsed_ms as u64,
+                    bubble_count: 1,
+                },
+            )
+            .await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(TextTranslateResponse {
+                    success: false,
+                    source: text.to_string(),
+                    target: String::new(),
+                    elapsed_ms,
+                    message: Some(e),
+                }),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -231,8 +337,8 @@ pub async fn translate_handler(
         )
         .await
     {
-        Ok((base64_img, img_map)) => {
-            state.total_processed.fetch_add(1, Ordering::Relaxed);
+        Ok((base64_img, img_map, timings)) => {
+            record_translation_event(&state, "page", true, timings).await;
             info!("Finished /translate request in {:?}", t0.elapsed());
 
             if form.r#type.as_deref() == Some("html") {
@@ -262,6 +368,17 @@ pub async fn translate_handler(
             Json(resp).into_response()
         }
         Err(e) => {
+            let total_ms = t0.elapsed().as_millis() as u64;
+            record_translation_event(
+                &state,
+                "page",
+                false,
+                PipelineTimings {
+                    total_ms,
+                    ..PipelineTimings::default()
+                },
+            )
+            .await;
             error!("Translation pipeline failed: {}", e);
             Json(TranslateResponse {
                 success: false,
@@ -289,12 +406,14 @@ pub async fn translate_region_handler(
         }
     };
 
+    let t0 = std::time::Instant::now();
     match state
         .pipeline
         .process_image(image_bytes, &form.source_lang, &form.target_lang, true)
         .await
     {
-        Ok((_, img_map)) => {
+        Ok((_, img_map, timings)) => {
+            record_translation_event(&state, "region", true, timings).await;
             let (source_text, target_text) = if let Some(first_box) = img_map.boxes.first() {
                 (first_box.text.clone(), first_box.target.clone())
             } else {
@@ -324,11 +443,23 @@ pub async fn translate_region_handler(
 
             Json(resp).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"success": false, "message": e})),
-        )
-            .into_response(),
+        Err(e) => {
+            record_translation_event(
+                &state,
+                "region",
+                false,
+                PipelineTimings {
+                    total_ms: t0.elapsed().as_millis() as u64,
+                    ..PipelineTimings::default()
+                },
+            )
+            .await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"success": false, "message": e})),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -364,7 +495,8 @@ pub async fn batch_translate_handler(
             )
             .await
         {
-            Ok((base64_img, img_map)) => {
+            Ok((base64_img, img_map, timings)) => {
+                record_translation_event(&state, "batch", true, timings).await;
                 results.push(TranslateResponse {
                     success: true,
                     img: base64_img,
@@ -373,6 +505,7 @@ pub async fn batch_translate_handler(
                 });
             }
             Err(e) => {
+                record_translation_event(&state, "batch", false, PipelineTimings::default()).await;
                 results.push(TranslateResponse {
                     success: false,
                     img: None,
@@ -384,7 +517,6 @@ pub async fn batch_translate_handler(
     }
 
     let elapsed_sec = t0.elapsed().as_secs_f64();
-    state.total_processed.fetch_add(total, Ordering::Relaxed);
 
     Json(BatchResponse {
         success: true,
@@ -395,15 +527,15 @@ pub async fn batch_translate_handler(
     .into_response()
 }
 
-pub async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    let total = state.total_processed.load(Ordering::Relaxed);
+pub async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<StatsSnapshot> {
     let configured = state.pipeline.translator.is_active_configured().await;
     let cfg = state.pipeline.translator.get_config().await;
-    Json(serde_json::json!({
-        "status": "online",
-        "total_processed": total,
-        "engine": "RapidOCR DirectML",
-        "translation_mode": cfg.translation_mode,
-        "api_key_configured": configured
-    }))
+    Json(state.stats.snapshot(&cfg.translation_mode, configured))
+}
+
+pub async fn reset_stats_handler(State(state): State<Arc<AppState>>) -> Json<StatsSnapshot> {
+    state.stats.reset();
+    let configured = state.pipeline.translator.is_active_configured().await;
+    let cfg = state.pipeline.translator.get_config().await;
+    Json(state.stats.snapshot(&cfg.translation_mode, configured))
 }

@@ -1,5 +1,7 @@
 use super::domain::{default_source_lang, default_target_lang};
 use super::local::DEFAULT_LOCAL_QUANT;
+#[cfg(feature = "free-mode")]
+use crate::pipe::free_mode::{FreeModeConfig, FreeSettingsForm, FreeSettingsResponse};
 use serde::{Deserialize, Serialize};
 
 fn default_port() -> u16 {
@@ -50,6 +52,9 @@ pub struct AppConfig {
     pub claude_api_key: String,
     #[serde(default = "default_local_model")]
     pub local_model: String,
+    #[cfg(feature = "free-mode")]
+    #[serde(flatten, default)]
+    pub free: FreeModeConfig,
 }
 
 impl Default for AppConfig {
@@ -64,6 +69,8 @@ impl Default for AppConfig {
             claude_model: default_claude_model(),
             claude_api_key: String::new(),
             local_model: default_local_model(),
+            #[cfg(feature = "free-mode")]
+            free: FreeModeConfig::default(),
         }
     }
 }
@@ -86,6 +93,9 @@ pub struct SaveSettingsForm {
     pub claude_api_key: String,
     #[serde(default = "default_local_model")]
     pub local_model: String,
+    #[cfg(feature = "free-mode")]
+    #[serde(flatten, default)]
+    pub free: FreeSettingsForm,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +113,9 @@ pub struct SettingsResponse {
     pub claude_key_configured: bool,
     pub claude_masked_key: String,
     pub local_model: String,
+    #[cfg(feature = "free-mode")]
+    #[serde(flatten)]
+    pub free: FreeSettingsResponse,
     pub active_configured: bool,
 }
 
@@ -124,6 +137,9 @@ pub struct TestKeyRequest {
     pub claude_api_key: String,
     #[serde(default)]
     pub local_model: String,
+    #[cfg(feature = "free-mode")]
+    #[serde(flatten, default)]
+    pub free: FreeSettingsForm,
 }
 
 #[derive(Debug, Serialize)]

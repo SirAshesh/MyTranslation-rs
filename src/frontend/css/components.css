@@ -210,6 +210,9 @@ a {
         border-bottom: 1px solid var(--rule);
         padding: 16px;
         gap: 12px;
+        position: static;
+        height: auto;
+        overflow: visible;
     }
     .brand {
         padding: 0 0 12px;
@@ -225,13 +228,31 @@ a {
         justify-content: center;
     }
     .sidebar-footer {
-        padding-top: 12px;
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        z-index: 40;
+        background-color: var(--surface);
+        border: 1px solid var(--control-border);
+        border-radius: 6px;
+        padding: 6px;
         flex-direction: row;
         justify-content: flex-end;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    }
+    .sidebar-footer button {
+        width: auto;
     }
     .home-grid,
     .pg-preview-grid {
         grid-template-columns: 1fr;
+    }
+    .settings-layout {
+        grid-template-columns: 190px minmax(0, 1fr);
+        gap: 18px;
+    }
+    .settings-modes {
+        padding-right: 16px;
     }
     .pg-controls {
         grid-template-columns: 1fr 1fr;
@@ -240,11 +261,21 @@ a {
         max-width: 92%;
     }
 }
+@media (max-width: 600px) {
+    .settings-layout {
+        grid-template-columns: 1fr;
+    }
+    .settings-modes {
+        padding-right: 0;
+        padding-bottom: 16px;
+        border-right: 0;
+        border-bottom: 1px solid var(--rule);
+    }
+}
 @media (max-width: 520px) {
     .content-area {
         padding: 16px 12px 64px;
     }
-    .mode-selector,
     .pg-controls {
         grid-template-columns: 1fr;
     }
@@ -335,5 +366,4 @@ a {
 }
 .local-status[data-phase="failed"]::before {
     background-color: var(--err-text);
-}
 }

@@ -11,6 +11,8 @@ pub struct Translator {
     client: LlmClient,
     config: Arc<RwLock<AppConfig>>,
     pub runtime: LocalRuntime,
+    #[cfg(feature = "free-mode")]
+    free_cache: crate::pipe::free_mode::FreeRouterCache,
 }
 
 impl Translator {
@@ -19,6 +21,8 @@ impl Translator {
             client: LlmClient::new(),
             config: Arc::new(RwLock::new(initial_config)),
             runtime: LocalRuntime::new(local_data_dir),
+            #[cfg(feature = "free-mode")]
+            free_cache: crate::pipe::free_mode::FreeRouterCache::new(),
         }
     }
 
@@ -30,7 +34,9 @@ impl Translator {
         let mut guard = self.config.write().await;
         let cfg = &mut *guard;
         let mode = form.translation_mode.trim().to_lowercase();
-        if matches!(mode.as_str(), "openai" | "claude" | "local") {
+        let is_valid_mode = matches!(mode.as_str(), "openai" | "claude" | "local")
+            || (cfg!(feature = "free-mode") && mode == "free");
+        if is_valid_mode {
             cfg.translation_mode = mode;
         }
 
@@ -48,6 +54,8 @@ impl Translator {
                 *stored = submitted.trim().to_string();
             }
         }
+        #[cfg(feature = "free-mode")]
+        cfg.free.apply_form(&form.free);
 
         cfg.clone()
     }
@@ -57,6 +65,8 @@ impl Translator {
         match cfg.translation_mode.as_str() {
             "claude" => !cfg.claude_api_key.trim().is_empty(),
             "local" => self.runtime.is_running().await,
+            #[cfg(feature = "free-mode")]
+            "free" => cfg.free.is_configured(),
             _ => !cfg.deepseek_api_key.trim().is_empty(),
         }
     }
@@ -79,24 +89,99 @@ impl Translator {
                 *stored = submitted.trim().to_string();
             }
         }
+        #[cfg(feature = "free-mode")]
+        temp_cfg.free.apply_form(&req.free);
         temp_cfg.translation_mode = temp_cfg.translation_mode.to_lowercase();
 
         match temp_cfg.translation_mode.as_str() {
             "claude" => self.client.test_connection_claude(&temp_cfg).await,
+            #[cfg(feature = "free-mode")]
+            "free" => {
+                crate::pipe::free_mode::verify_free_connection(
+                    &self.client,
+                    &self.free_cache,
+                    &temp_cfg.free,
+                )
+                .await
+            }
             _ => self.client.test_connection_chat(&temp_cfg).await,
         }
+    }
+
+    #[cfg(feature = "free-mode")]
+    pub async fn free_active_summary(&self, cfg: &AppConfig) -> Option<String> {
+        if cfg.translation_mode == "free" {
+            self.free_cache.current_winner_label(&cfg.free).await
+        } else {
+            None
+        }
+    }
+
+    pub async fn active_provider_label(&self) -> String {
+        let cfg = self.get_config().await;
+        match cfg.translation_mode.as_str() {
+            "claude" => format!("Claude ({})", cfg.claude_model),
+            "local" => format!("Local ({})", cfg.local_model),
+            #[cfg(feature = "free-mode")]
+            "free" => self
+                .free_active_summary(&cfg)
+                .await
+                .unwrap_or_else(|| format!("Free ({})", cfg.free.free_provider)),
+            _ => format!("OpenAI ({})", cfg.openai_model),
+        }
+    }
+
+    #[cfg(feature = "free-mode")]
+    pub async fn fetch_free_models(
+        &self,
+        provider: &str,
+        submitted_key: &str,
+    ) -> Result<(Vec<String>, usize), String> {
+        let cfg = self.get_config().await;
+        let effective_key = if submitted_key.trim().is_empty() {
+            cfg.free.stored_key_for(provider).to_string()
+        } else {
+            submitted_key.trim().to_string()
+        };
+        crate::pipe::free_mode::fetch_provider_models(
+            self.client.http_client(),
+            &self.free_cache,
+            provider,
+            &effective_key,
+        )
+        .await
     }
 
     pub async fn translate_bubbles(
         &self,
         bubbles: &[Bubble],
-        _source_lang: &str,
-        _target_lang: &str,
+        source_lang: &str,
+        target_lang: &str,
     ) -> Result<HashMap<usize, String>, String> {
         let cfg = self.get_config().await;
         match cfg.translation_mode.as_str() {
-            "claude" => self.client.translate_claude(&cfg, bubbles).await,
-            _ => self.client.translate_chat(&cfg, bubbles).await,
+            "claude" => {
+                self.client
+                    .translate_claude(&cfg, bubbles, source_lang, target_lang)
+                    .await
+            }
+            #[cfg(feature = "free-mode")]
+            "free" => {
+                crate::pipe::free_mode::translate_free(
+                    &self.client,
+                    &self.free_cache,
+                    &cfg.free,
+                    bubbles,
+                    source_lang,
+                    target_lang,
+                )
+                .await
+            }
+            _ => {
+                self.client
+                    .translate_chat(&cfg, bubbles, source_lang, target_lang)
+                    .await
+            }
         }
     }
 }

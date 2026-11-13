@@ -1,8 +1,11 @@
 pub mod clustering;
+#[cfg(feature = "free-mode")]
+pub mod free_mode;
 pub mod inpainting;
 pub mod llm_client;
 pub mod local_runtime;
 pub mod ocr;
+pub mod prompts;
 pub mod renderer;
 pub mod text_cleaner;
 pub mod translator;
@@ -14,6 +17,7 @@ pub use renderer::ComicRenderer;
 pub use translator::Translator;
 
 use crate::model::{BoxItem, Geometry, ImgMap};
+use crate::utilities::PipelineTimings;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use image::{ImageFormat, RgbImage};
@@ -47,7 +51,7 @@ impl Pipeline {
         source_lang: &str,
         target_lang: &str,
         without_image: bool,
-    ) -> Result<(Option<String>, ImgMap), String> {
+    ) -> Result<(Option<String>, ImgMap, PipelineTimings), String> {
         let t_start = std::time::Instant::now();
 
         let mut img: RgbImage = image::load_from_memory(&image_bytes)
@@ -62,13 +66,21 @@ impl Pipeline {
             let mut ocr_guard = self.ocr.lock().await;
             ocr_guard.run_ocr(&img)?
         };
+        let ocr_ms = t_ocr.elapsed().as_millis() as u64;
         info!("Native OCR detected {} lines in {:?}", ocr_lines.len(), t_ocr.elapsed());
 
         let bubbles = cluster_lines(ocr_lines, width, height, source_lang);
         info!("Clustered into {} speech bubbles", bubbles.len());
 
         if bubbles.is_empty() {
-            return Ok((None, ImgMap { boxes: Vec::new() }));
+            let timings = PipelineTimings {
+                ocr_ms,
+                translate_ms: 0,
+                render_ms: 0,
+                total_ms: t_start.elapsed().as_millis() as u64,
+                bubble_count: 0,
+            };
+            return Ok((None, ImgMap { boxes: Vec::new() }, timings));
         }
 
         let t_tr = std::time::Instant::now();
@@ -76,10 +88,11 @@ impl Pipeline {
             .translator
             .translate_bubbles(&bubbles, source_lang, target_lang)
             .await?;
+        let translate_ms = t_tr.elapsed().as_millis() as u64;
         info!("Translated {} bubbles in {:?}", translations.len(), t_tr.elapsed());
 
+        let t_render = std::time::Instant::now();
         let base64_image = if !without_image {
-            let t_render = std::time::Instant::now();
             clean_image_text(&mut img, &bubbles);
             self.renderer.render_bubbles(&mut img, &bubbles, &translations);
 
@@ -92,6 +105,11 @@ impl Pipeline {
             Some(BASE64.encode(&output_bytes))
         } else {
             None
+        };
+        let render_ms = if !without_image {
+            t_render.elapsed().as_millis() as u64
+        } else {
+            0
         };
 
         let mut boxes = Vec::new();
@@ -116,7 +134,14 @@ impl Pipeline {
             });
         }
 
+        let timings = PipelineTimings {
+            ocr_ms,
+            translate_ms,
+            render_ms,
+            total_ms: t_start.elapsed().as_millis() as u64,
+            bubble_count: bubbles.len(),
+        };
         info!("Total pipeline processing time: {:?}", t_start.elapsed());
-        Ok((base64_image, ImgMap { boxes }))
+        Ok((base64_image, ImgMap { boxes }, timings))
     }
 }

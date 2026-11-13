@@ -1,0 +1,87 @@
+<main class="login-shell">
+    <section class="panel-box login-card" aria-labelledby="signup-title">
+        <div class="login-brand">
+            <h1 id="signup-title">MyTranslation</h1>
+            <p>Your lovely automate translation</p>
+        </div>
+        <div class="status-banner signup-warn" role="note" data-state="warn">
+            [IMPORTANT] Remember your password carefully. There is no Forgot Password feature. If you forget it, you must delete storage.db to recover access.
+        </div>
+        <form id="signup-form" autocomplete="on">
+            <div class="field">
+                <label for="signup-user">Username</label>
+                <input type="text" id="signup-user" name="username" autocomplete="username" minlength="3" required autofocus />
+            </div>
+            <div class="field">
+                <label for="signup-pass">Password</label>
+                <input type="password" id="signup-pass" name="password" autocomplete="new-password" minlength="6" required />
+            </div>
+            <div class="field">
+                <label for="signup-confirm">Verify password</label>
+                <input type="password" id="signup-confirm" name="verify_password" autocomplete="new-password" minlength="6" required />
+            </div>
+            <div id="signup-error" class="status-banner" data-state="err" hidden></div>
+            <button type="submit" class="btn-primary login-submit" id="signup-submit">Create account</button>
+        </form>
+    </section>
+</main>
+<script>
+(function () {
+    try {
+        const savedTheme = localStorage.getItem("mytranslation_theme");
+        if (savedTheme === "light" || savedTheme === "dark") {
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        }
+    } catch (_) {}
+
+    const form = document.getElementById("signup-form");
+    const userEl = document.getElementById("signup-user");
+    const passEl = document.getElementById("signup-pass");
+    const confirmEl = document.getElementById("signup-confirm");
+    const btn = document.getElementById("signup-submit");
+    const errBox = document.getElementById("signup-error");
+
+    function showError(msg) {
+        errBox.textContent = "[ERROR] " + msg;
+        errBox.hidden = false;
+    }
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+
+        if (passEl.value !== confirmEl.value) {
+            showError("Password and verify password do not match.");
+            confirmEl.focus();
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Creating account...";
+
+        try {
+            const res = await fetch("/api/auth/signup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    username: userEl.value.trim(),
+                    password: passEl.value,
+                    verify_password: confirmEl.value
+                })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                window.location.href = "/";
+                return;
+            }
+            showError(data.message || "Failed to create account.");
+        } catch (err) {
+            showError("Sign up request failed: " + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Create account";
+        }
+    });
+})();
+</script>
+

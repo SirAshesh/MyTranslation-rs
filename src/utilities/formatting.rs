@@ -9,6 +9,17 @@ pub fn mask_secret(k: &str) -> String {
     }
 }
 
+pub fn redact_secrets(text: &str, secrets: &[&str]) -> String {
+    let mut sanitized = text.to_string();
+    for secret in secrets {
+        let trimmed = secret.trim();
+        if trimmed.len() >= 6 {
+            sanitized = sanitized.replace(trimmed, "[REDACTED]");
+        }
+    }
+    sanitized
+}
+
 pub fn resolve_openai_url(base: &str) -> String {
     let trimmed = base.trim().trim_end_matches('/');
     if trimmed.is_empty() {
@@ -16,7 +27,10 @@ pub fn resolve_openai_url(base: &str) -> String {
     }
     if trimmed.ends_with("/chat/completions") {
         trimmed.to_string()
-    } else if trimmed.ends_with("/v1") || trimmed.contains("api.deepseek.com") {
+    } else if trimmed.ends_with("/v1")
+        || trimmed.ends_with("/openai")
+        || trimmed.contains("api.deepseek.com")
+    {
         format!("{}/chat/completions", trimmed)
     } else {
         format!("{}/v1/chat/completions", trimmed)

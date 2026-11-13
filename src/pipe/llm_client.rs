@@ -1,5 +1,6 @@
 use crate::model::{local_server_url, AppConfig, Bubble};
-use crate::utilities::{resolve_claude_url, resolve_openai_url};
+use crate::pipe::prompts::{build_scanlation_system_prompt, build_translation_user_prompt};
+use crate::utilities::{redact_secrets, resolve_claude_url, resolve_openai_url};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ struct ChatEndpoint {
     url: String,
     api_key: Option<String>,
     model: String,
-    system_prompt: &'static str,
+    is_local: bool,
     temperature: f32,
     unreachable_hint: &'static str,
 }
@@ -86,70 +87,6 @@ struct TranslationItem {
     target: String,
 }
 
-fn scanlation_system_prompt() -> &'static str {
-    r#"You are a professional comic and manga scanlation translator.
-Your task is to translate comic dialogue into natural, fluent, and expressive Indonesian suited for conversational comic panels.
-
-SCANLATION QUALITY STANDARDS:
-1. CONCISE & FIT FOR SPEECH BUBBLES: Comic bubble space is strictly limited. Keep translations punchy and compact without omitting essential meaning.
-2. AVOID REDUNDANCY: Do not repeat identical subjects or objects within the same speech bubble.
-3. NATURAL CONVERSATIONAL TONE: Use modern, natural Indonesian comic dialogue (aku/kamu, udah, nggak, gimana, kayak, kok, sih, dong, ya). Avoid stiff, formal textbook language or literal machine translation.
-4. FIX OCR MERGED WORDS:
-   Input text originates from comic OCR which frequently drops spaces due to tight lettering.
-   - "anda love potion" / "alovepotion" -> means "and a love potion" / "a love potion" -> Translate as "dan ramuan cinta..." / "ramuan cinta" (NEVER translate "anda" as the pronoun "you").
-   - "imiss you" -> means "I miss you" -> Translate as "aku kangen kamu".
-   - "Harij-san" / "HarijuSan" / "Hariju-san" -> Character name is "Harij-san" (or Tuan Harij).
-   - "ICAN'TEVEN", "ITWASALL ANILLUSION", "IFSIRHARIJ", "ISTILLVIVIDLY", "THATOCCURRED" -> Separate words cleanly and understand their meaning accurately.
-   ENSURE ALL WORDS IN INDONESIAN ARE PROPERLY SEPARATED BY SPACES WITH NO MERGED WORDS!
-5. COMMON IDIOMATIC EXPRESSIONS:
-   - "Excuse me?" / "Excuse me!" is a polite query ("Permisi?") or an affronted reaction ("Apa katamu?!" / "Maksudmu?!"). NEVER translate literally as "Alasan me".
-6. PRESERVE EMOTIONAL PUNCTUATION: Maintain ellipsis (...), question marks (?), exclamation marks (!), and character expressiveness.
-
-OUTPUT FORMAT MUST BE A VALID JSON OBJECT WITH A 'translations' KEY:
-{
-  "translations": [
-    {"id": 1, "target": "Tapi kupikir dia udah dapet apa yang dia pesan?"},
-    {"id": 2, "target": "Makasih udah ngizinin aku masuk."}
-  ]
-}"#
-}
-
-fn local_scanlation_system_prompt() -> &'static str {
-    r#"You are an expert manga and comic scanlation translator translating dialogue into natural Indonesian.
-Task: Translate comic dialogue into fluent, expressive Indonesian that understands honorifics and social hierarchy.
-
-HONORIFIC & SCANLATION RULES:
-1. HONORIFICS & FORMS OF ADDRESS:
-   - Preserve Japanese honorific suffixes (-san, -kun, -chan, -sama, -senpai, -sensei) if they are part of character identity (e.g., "Harij-san", "Karin-chan", "Senpai").
-   - Alternatively, adapt naturally to social hierarchy: "Tuan [Nama]" (for nobles/masters), "Nona [Nama]", "Kak [Nama]".
-   - "Excuse me?" / "Excuse me!" -> "Permisi?" or shock reaction "Maksudmu apa?!" (NEVER translate as "Alasan me").
-2. NATURAL COMIC REGISTER:
-   - Close peers/friends: Use "aku/kamu" and casual conversational words (udah, nggak, gimana, kok, sih, dong, ya).
-   - Avoid stiff, formal textbook phrasing ("Saya/Anda" ONLY when speaking to nobles, royalty, or high officials).
-3. FIX OCR MERGED TEXT:
-   - Separate concatenated OCR words (e.g., "anda love potion" means "and a love potion" -> "dan ramuan cinta", NOT the pronoun "anda").
-4. CONCISE & PANEL-FITTING:
-   - Keep dialogue concise and punchy to fit neatly inside speech bubbles.
-5. REQUIRED JSON OUTPUT FORMAT:
-{
-  "translations": [
-    {"id": 1, "target": "Natural Indonesian translation"}
-  ]
-}"#
-}
-
-fn build_translation_user_prompt(bubbles: &[Bubble]) -> String {
-    let input_items: Vec<serde_json::Value> = bubbles
-        .iter()
-        .map(|b| serde_json::json!({ "id": b.id, "text": b.source_text }))
-        .collect();
-
-    format!(
-        "Translate the following comic dialogue items into natural Indonesian:\n{}",
-        serde_json::to_string_pretty(&input_items).unwrap_or_default()
-    )
-}
-
 fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
     if cfg.translation_mode == "local" {
         return Ok(ChatEndpoint {
@@ -157,7 +94,7 @@ fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
             url: resolve_openai_url(&local_server_url()),
             api_key: None,
             model: cfg.local_model.trim().to_string(),
-            system_prompt: local_scanlation_system_prompt(),
+            is_local: true,
             temperature: 0.1,
             unreachable_hint: " Start the model from Settings > Local Model first.",
         });
@@ -174,7 +111,7 @@ fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
         url: resolve_openai_url(&cfg.openai_base_url),
         api_key: Some(api_key.to_string()),
         model: if model.is_empty() { "deepseek-chat" } else { model }.to_string(),
-        system_prompt: scanlation_system_prompt(),
+        is_local: false,
         temperature: 0.3,
         unreachable_hint: "",
     })
@@ -230,40 +167,72 @@ impl LlmClient {
         Self { client }
     }
 
+    pub fn http_client(&self) -> &Client {
+        &self.client
+    }
+
     async fn send_chat(
         &self,
-        endpoint: &ChatEndpoint,
+        url: &str,
+        api_key: Option<&str>,
+        label: &str,
+        unreachable_hint: &str,
+        timeout_secs: u64,
         request: &OpenAiChatRequest,
-    ) -> Result<OpenAiChatResponse, String> {
+    ) -> Result<OpenAiChatResponse, (Option<u16>, String)> {
         let mut builder = self
             .client
-            .post(&endpoint.url)
+            .post(url)
             .header("Content-Type", "application/json")
+            .timeout(Duration::from_secs(timeout_secs))
             .json(request);
-        if let Some(api_key) = &endpoint.api_key {
-            builder = builder.header("Authorization", format!("Bearer {}", api_key));
+        if let Some(key) = api_key {
+            builder = builder.header("Authorization", format!("Bearer {}", key));
         }
 
+        let secrets: Vec<&str> = api_key.into_iter().collect();
         let response = builder.send().await.map_err(|e| {
-            format!("{} request failed: {}.{}", endpoint.label, e, endpoint.unreachable_hint)
+            (
+                None,
+                redact_secrets(
+                    &format!("{} request failed: {}.{}", label, e, unreachable_hint),
+                    &secrets,
+                ),
+            )
         })?;
 
         if !response.status().is_success() {
             let status = response.status();
+            let code = Some(status.as_u16());
             let body = response.text().await.unwrap_or_default();
-            return Err(format!("{} returned HTTP {}: {}", endpoint.label, status, body));
+            return Err((
+                code,
+                redact_secrets(
+                    &format!("{} returned HTTP {}: {}", label, status, body),
+                    &secrets,
+                ),
+            ));
         }
 
-        response
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse {} response: {}", endpoint.label, e))
+        response.json().await.map_err(|e| {
+            (
+                None,
+                format!("Failed to parse {} response: {}", label, e),
+            )
+        })
     }
 
-    pub async fn test_connection_chat(&self, cfg: &AppConfig) -> Result<String, String> {
-        let endpoint = resolve_chat_endpoint(cfg)?;
+    pub(crate) async fn ping_openai_compatible(
+        &self,
+        url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        label: &str,
+        unreachable_hint: &str,
+        timeout_secs: u64,
+    ) -> Result<(), (Option<u16>, String)> {
         let request = OpenAiChatRequest {
-            model: endpoint.model.clone(),
+            model: model.to_string(),
             messages: vec![ChatMessage {
                 role: "user".to_string(),
                 content: "ping".to_string(),
@@ -272,37 +241,47 @@ impl LlmClient {
             max_tokens: 5,
             response_format: None,
         };
-
-        self.send_chat(&endpoint, &request).await?;
-        Ok(format!("Connected to {} (model: {}).", endpoint.url, endpoint.model))
+        self.send_chat(url, api_key, label, unreachable_hint, timeout_secs, &request)
+            .await
+            .map(|_| ())
     }
 
-    pub async fn translate_chat(
+    pub(crate) async fn send_openai_compatible_translation(
         &self,
-        cfg: &AppConfig,
+        url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        system_prompt: &str,
+        temperature: f32,
         bubbles: &[Bubble],
-    ) -> Result<HashMap<usize, String>, String> {
-        let endpoint = resolve_chat_endpoint(cfg)?;
+        source_lang: &str,
+        target_lang: &str,
+        label: &str,
+        unreachable_hint: &str,
+        timeout_secs: u64,
+    ) -> Result<HashMap<usize, String>, (Option<u16>, String)> {
         let request = OpenAiChatRequest {
-            model: endpoint.model.clone(),
+            model: model.to_string(),
             messages: vec![
                 ChatMessage {
                     role: "system".to_string(),
-                    content: endpoint.system_prompt.to_string(),
+                    content: system_prompt.to_string(),
                 },
                 ChatMessage {
                     role: "user".to_string(),
-                    content: build_translation_user_prompt(bubbles),
+                    content: build_translation_user_prompt(bubbles, source_lang, target_lang),
                 },
             ],
-            temperature: endpoint.temperature,
+            temperature,
             max_tokens: 2048,
             response_format: Some(ResponseFormat {
                 r#type: "json_object".to_string(),
             }),
         };
 
-        let chat_response = self.send_chat(&endpoint, &request).await?;
+        let chat_response = self
+            .send_chat(url, api_key, label, unreachable_hint, timeout_secs, &request)
+            .await?;
         let raw_content = chat_response
             .choices
             .first()
@@ -310,6 +289,53 @@ impl LlmClient {
             .unwrap_or_default();
 
         Ok(parse_translation_json(raw_content))
+    }
+
+    #[cfg(feature = "free-mode")]
+    pub(crate) fn comic_system_prompt(&self, source_lang: &str, target_lang: &str) -> String {
+        build_scanlation_system_prompt(source_lang, target_lang, false)
+    }
+
+    pub async fn test_connection_chat(&self, cfg: &AppConfig) -> Result<String, String> {
+        let endpoint = resolve_chat_endpoint(cfg)?;
+        self.ping_openai_compatible(
+            &endpoint.url,
+            endpoint.api_key.as_deref(),
+            &endpoint.model,
+            endpoint.label,
+            endpoint.unreachable_hint,
+            90,
+        )
+        .await
+        .map_err(|(_, msg)| msg)?;
+        Ok(format!("Connected to {} (model: {}).", endpoint.url, endpoint.model))
+    }
+
+    pub async fn translate_chat(
+        &self,
+        cfg: &AppConfig,
+        bubbles: &[Bubble],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<HashMap<usize, String>, String> {
+        let endpoint = resolve_chat_endpoint(cfg)?;
+        let system_prompt =
+            build_scanlation_system_prompt(source_lang, target_lang, endpoint.is_local);
+        self.send_openai_compatible_translation(
+            &endpoint.url,
+            endpoint.api_key.as_deref(),
+            &endpoint.model,
+            &system_prompt,
+            endpoint.temperature,
+            bubbles,
+            source_lang,
+            target_lang,
+            endpoint.label,
+            endpoint.unreachable_hint,
+            90,
+        )
+        .await
+        .map_err(|(_, msg)| msg)
     }
 
     pub async fn test_connection_claude(&self, cfg: &AppConfig) -> Result<String, String> {
@@ -360,6 +386,8 @@ impl LlmClient {
         &self,
         cfg: &AppConfig,
         bubbles: &[Bubble],
+        source_lang: &str,
+        target_lang: &str,
     ) -> Result<HashMap<usize, String>, String> {
         if cfg.claude_api_key.trim().is_empty() {
             return Err("Claude API key is not configured. Open Settings in the web interface to add your key.".to_string());
@@ -375,10 +403,10 @@ impl LlmClient {
         let req_body = ClaudeMessageRequest {
             model,
             max_tokens: 2048,
-            system: scanlation_system_prompt().to_string(),
+            system: build_scanlation_system_prompt(source_lang, target_lang, false),
             messages: vec![ChatMessage {
                 role: "user".to_string(),
-                content: build_translation_user_prompt(bubbles),
+                content: build_translation_user_prompt(bubbles, source_lang, target_lang),
             }],
             temperature: 0.3,
         };

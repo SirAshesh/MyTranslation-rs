@@ -129,6 +129,7 @@ pub struct OcrLineItem {
 
 #[derive(Debug, Clone)]
 pub struct LineInfo {
+    pub quad: [[f32; 2]; 4],
     pub x1: f32,
     pub y1: f32,
     pub x2: f32,
@@ -137,6 +138,9 @@ pub struct LineInfo {
     pub cy: f32,
     pub w: f32,
     pub h: f32,
+    pub true_w: f32,
+    pub true_h: f32,
+    pub angle_rad: f32,
     pub text: String,
     pub score: f32,
 }
@@ -148,8 +152,14 @@ pub struct Bubble {
     pub y1: f32,
     pub x2: f32,
     pub y2: f32,
+    pub cx: f32,
+    pub cy: f32,
     pub w: f32,
     pub h: f32,
+    pub oriented_w: f32,
+    pub oriented_h: f32,
+    pub angle_rad: f32,
+    pub is_left_aligned: bool,
     pub source_text: String,
     pub lines: Vec<LineInfo>,
 }

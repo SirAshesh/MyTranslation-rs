@@ -1,0 +1,176 @@
+.mytrans-wait,
+.mytrans-wait * {
+  cursor: wait !important;
+}
+
+.mytrans-overlay {
+  position: fixed;
+  z-index: 2147483645;
+  background: rgba(15, 23, 42, 0.72);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #f8fafc;
+  font-size: 13px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  pointer-events: none;
+  border-radius: 4px;
+  backdrop-filter: blur(2px);
+}
+
+.mytrans-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(255, 255, 255, 0.28);
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  animation: mytrans-spin 0.7s linear infinite;
+  margin-bottom: 8px;
+}
+
+@keyframes mytrans-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#mytrans-sc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  cursor: crosshair;
+  background: rgba(15, 23, 42, 0.22);
+}
+
+#mytrans-sc-selection {
+  position: fixed;
+  z-index: 2147483647;
+  border: 2px dashed #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+  pointer-events: none;
+  box-sizing: border-box;
+  display: none;
+}
+
+.mytrans-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  max-width: 340px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.mytrans-toast.is-error {
+  border-color: #ef4444;
+  background: #450a0a;
+}
+
+.mytrans-region-card {
+  position: fixed;
+  right: 20px;
+  top: 20px;
+  z-index: 2147483647;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  background: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.mytrans-region-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  font-weight: 600;
+}
+
+.mytrans-region-close {
+  border: none;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.mytrans-region-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mytrans-region-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+}
+
+.mytrans-region-text {
+  padding: 8px;
+  border-radius: 6px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  white-space: pre-wrap;
+  max-height: 150px;
+  overflow-y: auto;
+  line-height: 1.45;
+}
+
+.mytrans-region-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mytrans-region-btn {
+  border: 1px solid #475569;
+  background: #2563eb;
+  color: #ffffff;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#mytrans-floating-btn {
+  position: fixed;
+  z-index: 2147483644;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.85);
+  background: #2563eb;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  user-select: none;
+}
+

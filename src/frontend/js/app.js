@@ -18,6 +18,8 @@ let activeModelName = "deepseek-chat";
 let selectedImageDataUrl = "";
 
 const themeBtn = document.getElementById("theme-btn");
+const themeLabel = document.getElementById("theme-label");
+const logoutBtn = document.getElementById("logout-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 const copyUrlBtn = document.getElementById("copy-url-btn");
 const gotoSettingsLink = document.getElementById("goto-settings-link");
@@ -121,7 +123,9 @@ function applyTheme(theme) {
     document.documentElement.setAttribute("data-theme", theme);
     const isLight = theme === "light";
     themeBtn.setAttribute("aria-pressed", isLight ? "true" : "false");
-    themeBtn.textContent = isLight ? "Theme: Light" : "Theme: Dark";
+    if (themeLabel) {
+        themeLabel.textContent = isLight ? "Theme: Light" : "Theme: Dark";
+    }
     try {
         localStorage.setItem("mytranslation_theme", theme);
     } catch (_) {}
@@ -138,6 +142,16 @@ themeBtn.addEventListener("click", () => {
     const current = document.documentElement.getAttribute("data-theme") || "dark";
     applyTheme(current === "dark" ? "light" : "dark");
 });
+
+if (logoutBtn) {
+    logoutBtn.addEventListener("click", async () => {
+        logoutBtn.disabled = true;
+        try {
+            await fetch("/api/auth/logout", { method: "POST" });
+        } catch (_) {}
+        window.location.href = "/login";
+    });
+}
 
 function bindPasswordToggle(btn, input) {
     btn.addEventListener("click", () => {
@@ -167,6 +181,7 @@ copyUrlBtn.addEventListener("click", async () => {
 function formatModeName(mode) {
     if (mode === "claude") return "Claude Compatible Endpoint";
     if (mode === "local") return "Local Model (LFM / GGUF)";
+    if (mode === "free") return "Free-Tier LLM API";
     return "OpenAI Compatible Endpoint";
 }
 
@@ -187,6 +202,10 @@ async function loadRuntimeState(announce) {
             fetch("/api/settings"),
             fetch("/stats")
         ]);
+        if (settingsRes.status === 401 || statsRes.status === 401) {
+            window.location.href = "/login";
+            return;
+        }
         if (!settingsRes.ok || !statsRes.ok) {
             throw new Error("Server returned HTTP " + settingsRes.status);
         }
@@ -200,7 +219,8 @@ async function loadRuntimeState(announce) {
         statPages.textContent = String(st.total_processed ?? 0);
 
         let mode = s.translation_mode || "openai";
-        if (mode !== "claude" && mode !== "openai" && mode !== "local") {
+        const supportsFreeMode = Boolean(window.freeModeHandlers);
+        if (mode !== "claude" && mode !== "openai" && mode !== "local" && !(supportsFreeMode && mode === "free")) {
             mode = "openai";
         }
         selectMode(mode);
@@ -213,6 +233,10 @@ async function loadRuntimeState(announce) {
         claudeUrlInput.value = s.claude_base_url || "https://api.anthropic.com";
         claudeModelInput.value = s.claude_model || "claude-3-5-sonnet-latest";
         claudeKeyInput.placeholder = s.claude_key_configured ? "Saved (" + s.claude_masked_key + ")" : "Enter sk-ant-...";
+
+        if (supportsFreeMode) {
+            window.freeModeHandlers.applyState(s);
+        }
 
         if (s.local_model) {
             savedLocalModel = s.local_model;
@@ -229,6 +253,11 @@ async function loadRuntimeState(announce) {
             activeModelName = "LiquidAI LFM3 1.7B (" + (s.local_model || "Q6_K") + ")";
             statModel.textContent = activeModelName;
             statKey.textContent = "Offline (Local)";
+        } else if (mode === "free" && supportsFreeMode) {
+            const summary = window.freeModeHandlers.getSummary(s);
+            activeModelName = summary.modelName;
+            statModel.textContent = activeModelName;
+            statKey.textContent = summary.keyStatus;
         } else {
             activeModelName = s.openai_model || "deepseek-chat";
             statModel.textContent = activeModelName;
@@ -267,7 +296,7 @@ settingsForm.addEventListener("submit", async (e) => {
     saveBtn.textContent = "Saving...";
     setBanner(settingsStatusBox, "loading", "LOADING", "Writing configuration to config.json...");
 
-    const payload = {
+    const payload = Object.assign({
         translation_mode: activeMode,
         openai_base_url: openaiUrlInput.value.trim(),
         openai_model: openaiModelInput.value.trim(),
@@ -276,7 +305,7 @@ settingsForm.addEventListener("submit", async (e) => {
         claude_model: claudeModelInput.value.trim(),
         claude_api_key: claudeKeyInput.value.trim(),
         local_model: localModelSelect ? localModelSelect.value : savedLocalModel
-    };
+    }, window.freeModeHandlers ? window.freeModeHandlers.buildPayload() : {});
 
     try {
         const res = await fetch("/api/settings", {
@@ -284,10 +313,17 @@ settingsForm.addEventListener("submit", async (e) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
         });
+        if (res.status === 401) {
+            window.location.href = "/login";
+            return;
+        }
         const data = await res.json();
         if (data.success) {
             openaiKeyInput.value = "";
             claudeKeyInput.value = "";
+            if (window.freeModeHandlers && window.freeModeHandlers.clearKeyInputs) {
+                window.freeModeHandlers.clearKeyInputs();
+            }
             await loadRuntimeState(false);
             setBanner(settingsStatusBox, "ok", "SAVED", data.message);
         } else {
@@ -306,7 +342,7 @@ testBtn.addEventListener("click", async () => {
     testBtn.textContent = "Verifying...";
     setBanner(settingsStatusBox, "loading", "LOADING", "Testing connection for " + formatModeName(activeMode) + "...");
 
-    const payload = {
+    const payload = Object.assign({
         translation_mode: activeMode,
         openai_base_url: openaiUrlInput.value.trim(),
         openai_model: openaiModelInput.value.trim(),
@@ -315,7 +351,7 @@ testBtn.addEventListener("click", async () => {
         claude_model: claudeModelInput.value.trim(),
         claude_api_key: claudeKeyInput.value.trim(),
         local_model: localModelSelect ? localModelSelect.value : savedLocalModel
-    };
+    }, window.freeModeHandlers ? window.freeModeHandlers.buildPayload() : {});
 
     try {
         const res = await fetch("/api/test-key", {

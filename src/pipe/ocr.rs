@@ -1,7 +1,7 @@
 use crate::model::OcrLineItem;
 use image::RgbImage;
 use rapidocr_core::config::ExecutionProvider;
-use rapidocr_core::model::{ModelCache, ModelDownloadMode, PPOCRV4_EN_MOBILE};
+use rapidocr_core::model::{ModelCache, ModelDownloadMode, PPOCRV4_EN_MOBILE, PPOCRV6_SMALL};
 use rapidocr_core::RapidOcr;
 use std::path::Path;
 use tracing::info;
@@ -12,25 +12,32 @@ pub struct OcrManager {
 
 impl OcrManager {
     pub fn new(_port: u16) -> Result<Self, String> {
-        let model_dir = if Path::new("models").exists() {
+        let model_dir_str = if Path::new("models").exists() {
             "models"
         } else {
             "Server-rs/models"
         };
+        let model_dir = Path::new(model_dir_str);
 
-        info!("Initializing Native Rust RapidOCR from {}...", model_dir);
+        info!("Initializing Native Rust RapidOCR from {}...", model_dir_str);
         let cache = ModelCache::new(model_dir);
         cache
-            .ensure_model_set(&PPOCRV4_EN_MOBILE, ModelDownloadMode::Missing)
+            .ensure_model_set(&PPOCRV6_SMALL, ModelDownloadMode::Missing)
             .map_err(|e| format!("Failed to ensure OCR models: {}", e))?;
+        cache
+            .ensure_model_set(&PPOCRV4_EN_MOBILE, ModelDownloadMode::Missing)
+            .map_err(|e| format!("Failed to ensure OCR det model: {}", e))?;
 
-        let mut cfg = cache.config_for(&PPOCRV4_EN_MOBILE);
+        let mut cfg = cache.config_for(&PPOCRV6_SMALL);
         cfg.pipeline.use_cls = false;
-        cfg.text_score = 0.58;
+        cfg.text_score = 0.40;
         if let Some(ref mut det) = cfg.det {
-            det.box_thresh = 0.55;
-            det.unclip_ratio = 1.50;
+            det.model_path = model_dir.join("en_PP-OCRv3_det_mobile.onnx");
+            det.limit_side_len = 2800;
+            det.box_thresh = 0.33;
+            det.unclip_ratio = 1.70;
         }
+
         #[cfg(target_os = "windows")]
         {
             cfg.inference.execution_provider = ExecutionProvider::DirectMl;
@@ -57,24 +64,34 @@ impl OcrManager {
 
     pub fn run_ocr(&mut self, img: &RgbImage) -> Result<Vec<OcrLineItem>, String> {
         let (orig_w, orig_h) = (img.width(), img.height());
-        let scale = if orig_w < 500 && orig_h < 500 { 2.0f32 } else { 1.0f32 };
+        let max_dim = orig_w.max(orig_h);
+        let min_dim = orig_w.min(orig_h);
 
-        let scaled_img;
-        let target_img = if scale > 1.0 {
-            scaled_img = image::imageops::resize(
-                img,
-                (orig_w as f32 * scale).round() as u32,
-                (orig_h as f32 * scale).round() as u32,
-                image::imageops::FilterType::CatmullRom,
-            );
-            &scaled_img
+        let scale = if max_dim < 1200 {
+            (1600.0 / max_dim as f32).clamp(1.2, 2.0)
+        } else if min_dim < 960 && max_dim <= 2400 {
+            let max_safe_scale = (2800.0 / max_dim as f32).max(1.0);
+            (1024.0 / min_dim as f32).clamp(1.15, 1.5).min(max_safe_scale)
         } else {
-            img
+            1.0f32
+        };
+
+        let processed = if scale > 1.0 {
+            let target_w = (orig_w as f32 * scale).round() as u32;
+            let target_h = (orig_h as f32 * scale).round() as u32;
+            image::imageops::resize(
+                img,
+                target_w,
+                target_h,
+                image::imageops::FilterType::CatmullRom,
+            )
+        } else {
+            img.clone()
         };
 
         let res = self
             .ocr
-            .run_image(target_img)
+            .run_image(&processed)
             .map_err(|e| format!("Native OCR execution failed: {}", e))?;
 
         let lines = res

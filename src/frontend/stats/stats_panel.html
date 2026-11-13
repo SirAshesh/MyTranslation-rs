@@ -1,0 +1,117 @@
+        <section class="view-panel" id="panel-statistics" role="tabpanel" aria-labelledby="tab-statistics">
+            <header class="page-header">
+                <div>
+                    <h2>Statistics</h2>
+                    <p>Live throughput, stage latency breakdown, and model usage charts.</p>
+                </div>
+                <div class="stats-header-actions">
+                    <span class="stats-uptime" id="stats-uptime">Uptime: 0s</span>
+                    <label class="stats-live-toggle">
+                        <input type="checkbox" id="stats-auto-refresh" checked />
+                        <span>Live 5s</span>
+                    </label>
+                    <button type="button" class="btn-secondary" id="stats-refresh-btn">Refresh</button>
+                    <button type="button" class="btn-secondary" id="stats-reset-btn">Reset</button>
+                </div>
+            </header>
+
+            <div class="stats-kpi-grid">
+                <div class="panel-box stats-kpi-card">
+                    <span class="stats-kpi-label">Total requests</span>
+                    <strong class="stats-kpi-val" id="stats-kpi-requests">0</strong>
+                    <span class="stats-kpi-sub" id="stats-kpi-pages">0 pages rendered</span>
+                </div>
+                <div class="panel-box stats-kpi-card">
+                    <span class="stats-kpi-label">Success rate</span>
+                    <strong class="stats-kpi-val" id="stats-kpi-success">100%</strong>
+                    <span class="stats-kpi-sub" id="stats-kpi-errors">0 errors</span>
+                </div>
+                <div class="panel-box stats-kpi-card">
+                    <span class="stats-kpi-label">Bubbles translated</span>
+                    <strong class="stats-kpi-val" id="stats-kpi-bubbles">0</strong>
+                    <span class="stats-kpi-sub" id="stats-kpi-mode">Mode: -</span>
+                </div>
+                <div class="panel-box stats-kpi-card">
+                    <span class="stats-kpi-label">Average latency</span>
+                    <strong class="stats-kpi-val" id="stats-kpi-latency">0 ms</strong>
+                    <span class="stats-kpi-sub" id="stats-kpi-last">Last: 0 ms</span>
+                </div>
+            </div>
+
+            <div class="stats-charts-grid">
+                <div class="panel-box stats-chart-card">
+                    <div class="stats-card-head">
+                        <div>
+                            <h3 class="box-title">Latency per request</h3>
+                            <p class="box-desc">Stacked OCR, LLM translation, and render duration across recent calls.</p>
+                        </div>
+                        <div class="stats-legend" aria-hidden="true">
+                            <span><i class="dot dot-ocr"></i>OCR</span>
+                            <span><i class="dot dot-tr"></i>LLM</span>
+                            <span><i class="dot dot-ren"></i>Render</span>
+                            <span><i class="dot dot-err"></i>Error</span>
+                        </div>
+                    </div>
+                    <div class="chart-canvas" id="chart-latency"></div>
+                </div>
+
+                <div class="panel-box stats-chart-card">
+                    <div class="stats-card-head">
+                        <div>
+                            <h3 class="box-title">Throughput over time</h3>
+                            <p class="box-desc">Requests, failed calls, and translated bubbles grouped by minute.</p>
+                        </div>
+                        <div class="stats-legend" aria-hidden="true">
+                            <span><i class="dot dot-ocr"></i>Requests</span>
+                            <span><i class="dot dot-tr"></i>Bubbles</span>
+                            <span><i class="dot dot-err"></i>Errors</span>
+                        </div>
+                    </div>
+                    <div class="chart-canvas" id="chart-timeline"></div>
+                </div>
+
+                <div class="panel-box stats-chart-card">
+                    <h3 class="box-title">Pipeline stage share</h3>
+                    <p class="box-desc">Average processing time distribution across pipeline phases.</p>
+                    <div class="chart-canvas" id="chart-stages"></div>
+                </div>
+
+                <div class="panel-box stats-chart-card">
+                    <h3 class="box-title">Models &amp; endpoints</h3>
+                    <p class="box-desc">Request share and average latency grouped by active provider/model.</p>
+                    <div class="chart-canvas" id="chart-models"></div>
+                </div>
+            </div>
+
+            <div class="panel-box">
+                <h3 class="box-title">Recent activity</h3>
+                <p class="box-desc">Latest translation requests processed since server startup.</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Model</th>
+                                <th>Bubbles</th>
+                                <th>OCR / LLM / Render</th>
+                                <th>Total</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stats-recent-tbody">
+                            <tr>
+                                <td colspan="8" class="empty-text">No requests recorded yet.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="stats-tooltip" id="stats-tooltip" hidden></div>
+            <div id="stats-status-box" class="status-banner" role="status" aria-live="polite" data-state="ok">
+                [READY] Telemetry collector active.
+            </div>
+        </section>
+

@@ -3,6 +3,10 @@ name = "server-rs"
 version = "0.2.0"
 edition = "2021"
 
+[features]
+default = ["free-mode"]
+free-mode = []
+
 [dependencies]
 axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
@@ -22,6 +26,11 @@ rayon = "1.10"
 regex = "1.11"
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 futures-util = "0.3.34"
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+hmac = "0.12"
+pbkdf2 = "0.12"
+rand = "0.8"
 
 [target.'cfg(windows)'.dependencies]
 rapidocr-core = { version = "0.2.2", default-features = false, features = ["model-download", "directml"] }

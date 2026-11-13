@@ -1,17 +1,16 @@
-mod frontend;
-mod handlers;
-mod model;
-mod pipe;
-mod utilities;
-
 use axum::http::{header, Method};
+use axum::middleware;
 use axum::routing::{get, post};
 use axum::Router;
-use handlers::*;
-use model::AppConfig;
-use pipe::{ComicRenderer, OcrManager, Pipeline, Translator};
+use server_rs::auth::{
+    login_page_handler, login_submit_handler, logout_handler, require_admin_middleware,
+    signup_page_handler, signup_submit_handler,
+};
+use server_rs::handlers::*;
+use server_rs::model::AppConfig;
+use server_rs::pipe::{ComicRenderer, OcrManager, Pipeline, Translator};
+use server_rs::utilities::{resolve_storage_path, StatsTracker, StorageDb};
 use std::net::SocketAddr;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
@@ -104,11 +103,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let storage_path = resolve_storage_path(&config_path);
+    let storage = StorageDb::open(&storage_path)?;
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(|s| s.as_str()) == Some("--set-admin") {
+        let user = args.get(2).map(|s| s.as_str()).unwrap_or("");
+        let pass = args.get(3).map(|s| s.as_str()).unwrap_or("");
+        storage.set_super_admin_credentials(user, pass)?;
+        println!("Updated Super Admin credentials for '{}' in {}", user, storage_path.display());
+        return Ok(());
+    }
+
+    if storage.ensure_super_admin_from_env()? {
+        info!("Seeded initial Super Admin from environment variables in {}", storage_path.display());
+    } else if !storage.has_super_admin()? {
+        info!(
+            "No admin account found in {} — open http://127.0.0.1:{} to create your account.",
+            storage_path.display(),
+            port
+        );
+    }
+
+    let stats = StatsTracker::with_storage(storage.clone());
     let pipeline = Pipeline::new(ocr, translator, renderer);
 
     let state = Arc::new(AppState {
         pipeline,
-        total_processed: AtomicUsize::new(0),
+        stats,
+        storage,
         config_path,
     });
 
@@ -124,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_headers(tower_http::cors::Any)
         .expose_headers([header::CONTENT_TYPE]);
 
-    let app = Router::new()
+    let protected_routes = Router::new()
         .route("/", get(dashboard_handler))
         .route("/settings", get(dashboard_handler))
         .route(
@@ -137,12 +160,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/local/stop", post(local_stop_handler))
         .route("/api/test-key", post(test_key_handler))
         .route("/api/translate/text", post(translate_text_handler))
+        .route("/stats", get(stats_handler))
+        .route("/api/stats/reset", post(reset_stats_handler));
+
+    #[cfg(feature = "free-mode")]
+    let protected_routes = protected_routes.route("/api/free/models", post(free_models_handler));
+
+    let protected_routes = protected_routes.layer(middleware::from_fn_with_state(
+        state.clone(),
+        require_admin_middleware,
+    ));
+
+    let app = Router::new()
+        .route("/login", get(login_page_handler))
+        .route("/signup", get(signup_page_handler))
+        .route("/api/auth/login", post(login_submit_handler))
+        .route("/api/auth/signup", post(signup_submit_handler))
+        .route("/api/auth/logout", post(logout_handler))
         .route("/list", get(list_handler))
         .route("/translate", post(translate_handler))
         .route("/translateRegion", post(translate_region_handler))
         .route("/api/translate/batch", post(batch_translate_handler))
         .route("/batch", post(batch_translate_handler))
-        .route("/stats", get(stats_handler))
+        .merge(protected_routes)
         .layer(axum::extract::DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(cors)
         .with_state(state.clone());
