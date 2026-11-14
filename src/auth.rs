@@ -1,5 +1,6 @@
 use crate::handlers::AppState;
 use crate::utilities::storage::SignupError;
+use crate::utilities::ClientIp;
 use axum::extract::{Json, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::Next;
@@ -9,6 +10,8 @@ use std::sync::Arc;
 
 const SESSION_COOKIE_NAME: &str = "mt_session";
 const SESSION_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
+const AUTH_MAX_ATTEMPTS: usize = 5;
+const AUTH_WINDOW_SECS: u64 = 60;
 
 #[derive(Debug, Deserialize)]
 pub struct LoginRequest {
@@ -105,24 +108,54 @@ pub async fn signup_page_handler(
     Html(crate::frontend::render_signup_html()).into_response()
 }
 
+fn check_auth_rate_limit(state: &AppState, client_ip: &str) -> Result<(), Response> {
+    if let Err(retry_after) =
+        state
+            .auth_rate_limiter
+            .check_and_record(client_ip, 1, AUTH_MAX_ATTEMPTS, AUTH_WINDOW_SECS)
+    {
+        let mut resp = (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "success": false,
+                "message": format!("Too many authentication attempts. Try again in {}s.", retry_after)
+            })),
+        )
+            .into_response();
+        if let Ok(val) = retry_after.to_string().parse() {
+            resp.headers_mut().insert(header::RETRY_AFTER, val);
+        }
+        return Err(resp);
+    }
+    Ok(())
+}
+
 pub async fn signup_submit_handler(
     State(state): State<Arc<AppState>>,
+    ClientIp(client_ip): ClientIp,
     Json(payload): Json<SignupRequest>,
 ) -> Response {
+    if let Err(resp) = check_auth_rate_limit(&state, &client_ip) {
+        return resp;
+    }
+
     match state.storage.create_initial_admin(
         &payload.username,
         &payload.password,
         &payload.verify_password,
     ) {
-        Ok(token) => (
-            StatusCode::OK,
-            [(header::SET_COOKIE, session_cookie_header(&token, SESSION_MAX_AGE_SECS))],
-            Json(serde_json::json!({
-                "success": true,
-                "message": "Account created."
-            })),
-        )
-            .into_response(),
+        Ok(token) => {
+            state.auth_rate_limiter.reset(&client_ip);
+            (
+                StatusCode::OK,
+                [(header::SET_COOKIE, session_cookie_header(&token, SESSION_MAX_AGE_SECS))],
+                Json(serde_json::json!({
+                    "success": true,
+                    "message": "Account created."
+                })),
+            )
+                .into_response()
+        }
         Err(SignupError::AlreadyExists) => (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({
@@ -152,21 +185,29 @@ pub async fn signup_submit_handler(
 
 pub async fn login_submit_handler(
     State(state): State<Arc<AppState>>,
+    ClientIp(client_ip): ClientIp,
     Json(payload): Json<LoginRequest>,
 ) -> Response {
+    if let Err(resp) = check_auth_rate_limit(&state, &client_ip) {
+        return resp;
+    }
+
     match state
         .storage
         .verify_login(&payload.username, &payload.password)
     {
-        Ok(Some(token)) => (
-            StatusCode::OK,
-            [(header::SET_COOKIE, session_cookie_header(&token, SESSION_MAX_AGE_SECS))],
-            Json(serde_json::json!({
-                "success": true,
-                "message": "Signed in."
-            })),
-        )
-            .into_response(),
+        Ok(Some(token)) => {
+            state.auth_rate_limiter.reset(&client_ip);
+            (
+                StatusCode::OK,
+                [(header::SET_COOKIE, session_cookie_header(&token, SESSION_MAX_AGE_SECS))],
+                Json(serde_json::json!({
+                    "success": true,
+                    "message": "Signed in."
+                })),
+            )
+                .into_response()
+        }
         Ok(None) => (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({

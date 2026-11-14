@@ -109,6 +109,27 @@ impl Translator {
                 *stored = submitted.trim().to_string();
             }
         }
+        if let Some(disable_batch) = form.disable_batch_endpoint {
+            cfg.disable_batch_endpoint = disable_batch;
+        }
+        if let Some(enable_queue) = form.enable_queue {
+            cfg.enable_queue = enable_queue;
+        }
+        if let Some(max_concurrent) = form.queue_max_concurrent {
+            cfg.queue_max_concurrent = max_concurrent.clamp(1, 100);
+        }
+        if let Some(enable_rate_limit) = form.enable_rate_limit {
+            cfg.enable_rate_limit = enable_rate_limit;
+        }
+        if let Some(max_images) = form.rate_limit_max_images {
+            cfg.rate_limit_max_images = max_images.clamp(1, 1000);
+        }
+        if let Some(window_secs) = form.rate_limit_window_secs {
+            cfg.rate_limit_window_secs = window_secs.clamp(1, 3600);
+        }
+        if let Some(max_image_mb) = form.max_image_size_mb {
+            cfg.max_image_size_mb = max_image_mb.clamp(1, 100);
+        }
         #[cfg(feature = "free-mode")]
         cfg.free.apply_form(&form.free);
 

@@ -9,7 +9,9 @@ use server_rs::auth::{
 use server_rs::handlers::*;
 use server_rs::model::AppConfig;
 use server_rs::pipe::{ComicRenderer, OcrManager, Pipeline, Translator};
-use server_rs::utilities::{resolve_storage_path, StatsTracker, StorageDb};
+use server_rs::utilities::{
+    resolve_storage_path, ImageQueue, IpRateLimiter, StatsTracker, StorageDb,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -133,6 +135,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stats,
         storage,
         config_path,
+        image_queue: ImageQueue::default(),
+        rate_limiter: IpRateLimiter::default(),
+        auth_rate_limiter: IpRateLimiter::default(),
     });
 
     let cors = CorsLayer::new()
@@ -191,7 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("MyTranslation listening on http://127.0.0.1:{}", port);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             if let Err(err) = tokio::signal::ctrl_c().await {
                 warn!("Failed to listen for the shutdown signal: {}", err);

@@ -21,11 +21,56 @@ use crate::model::{BoxItem, Geometry, ImgMap};
 use crate::utilities::PipelineTimings;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use image::{ImageFormat, RgbImage};
+use image::{ImageFormat, ImageReader, Limits, RgbImage};
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
+
+const MAX_IMAGE_WIDTH: u32 = 16_384;
+const MAX_IMAGE_HEIGHT: u32 = 16_384;
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+const MAX_DECODE_ALLOC_BYTES: u64 = 256 * 1024 * 1024;
+
+fn decode_bounded_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, String> {
+    let dim_reader = ImageReader::new(Cursor::new(image_bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to inspect image format: {}", e))?;
+    let (width, height) = dim_reader
+        .into_dimensions()
+        .map_err(|e| format!("Failed to read image dimensions: {}", e))?;
+
+    if width == 0 || height == 0 {
+        return Err("Image dimensions must be greater than zero.".to_string());
+    }
+    let pixels = (width as u64).saturating_mul(height as u64);
+    if width > MAX_IMAGE_WIDTH || height > MAX_IMAGE_HEIGHT || pixels > MAX_IMAGE_PIXELS {
+        return Err(format!(
+            "Image dimensions {}x{} ({} MP) exceed the maximum allowed limit ({}x{}, {} MP).",
+            width,
+            height,
+            pixels / 1_000_000,
+            MAX_IMAGE_WIDTH,
+            MAX_IMAGE_HEIGHT,
+            MAX_IMAGE_PIXELS / 1_000_000
+        ));
+    }
+
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_WIDTH);
+    limits.max_image_height = Some(MAX_IMAGE_HEIGHT);
+    limits.max_alloc = Some(MAX_DECODE_ALLOC_BYTES);
+
+    let mut decode_reader = ImageReader::new(Cursor::new(image_bytes))
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to read image format: {}", e))?;
+    decode_reader.limits(limits);
+
+    Ok(decode_reader
+        .decode()
+        .map_err(|e| format!("Failed to decode image: {}", e))?
+        .to_rgb8())
+}
 
 pub struct Pipeline {
     pub ocr: Arc<Mutex<OcrManager>>,
@@ -55,9 +100,7 @@ impl Pipeline {
     ) -> Result<(Option<String>, ImgMap, PipelineTimings), String> {
         let t_start = std::time::Instant::now();
 
-        let mut img: RgbImage = image::load_from_memory(&image_bytes)
-            .map_err(|e| format!("Failed to decode image: {}", e))?
-            .to_rgb8();
+        let mut img = decode_bounded_rgb_image(&image_bytes)?;
 
         let (width, height) = (img.width(), img.height());
         info!("Processing image {}x{}, decode in {:?}", width, height, t_start.elapsed());
@@ -147,5 +190,24 @@ impl Pipeline {
         };
         info!("Total pipeline processing time: {:?}", t_start.elapsed());
         Ok((base64_image, ImgMap { boxes }, timings))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_decompression_bomb_before_allocating() {
+        let mut png_bytes = Vec::new();
+        let tiny = RgbImage::new(1, 1);
+        tiny.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+            .expect("encode 1x1 png");
+        png_bytes[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        png_bytes[20..24].copy_from_slice(&20_000u32.to_be_bytes());
+        png_bytes[29..33].copy_from_slice(&0x6c12d16eu32.to_be_bytes());
+
+        let err = decode_bounded_rgb_image(&png_bytes).unwrap_err();
+        assert!(err.contains("exceed the maximum allowed limit"), "{}", err);
     }
 }

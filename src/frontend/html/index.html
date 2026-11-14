@@ -286,20 +286,29 @@
                 <form id="settings-form" novalidate>
                     <div class="settings-layout">
                         <div class="settings-modes">
+                            <span id="general-group-label" class="settings-modes-label">General</span>
+                            <div class="mode-selector" role="tablist" aria-labelledby="general-group-label">
+                                <button type="button" class="mode-btn settings-tab-btn" id="tab-general-btn"
+                                    role="tab" aria-selected="true" data-viewing="true" data-settings-tab="general">
+                                    <span class="mode-btn-title">General</span>
+                                    <span class="mode-btn-sub">Endpoints, queue &amp; limits</span>
+                                </button>
+                            </div>
+                            <div class="mode-divider" aria-hidden="true"></div>
                             <span id="mode-group-label" class="settings-modes-label">Translation mode</span>
                             <div class="mode-selector" role="radiogroup" aria-labelledby="mode-group-label">
                                 <button type="button" class="mode-btn" role="radio" aria-checked="true"
-                                    data-mode="openai">
+                                    data-viewing="false" data-mode="openai">
                                     <span class="mode-btn-title">OpenAI Compatible</span>
                                     <span class="mode-btn-sub">OpenAI Message API</span>
                                 </button>
                                 <button type="button" class="mode-btn" role="radio" aria-checked="false"
-                                    data-mode="claude">
+                                    data-viewing="false" data-mode="claude">
                                     <span class="mode-btn-title">Claude Compatible</span>
                                     <span class="mode-btn-sub">Anthropic Messages API</span>
                                 </button>
                                 <button type="button" class="mode-btn" role="radio" aria-checked="false"
-                                    data-mode="local">
+                                    data-viewing="false" data-mode="local">
                                     <span class="mode-btn-title">Local Model</span>
                                     <span class="mode-btn-sub">Offline GGUF runtime</span>
                                 </button>
@@ -308,7 +317,79 @@
                         </div>
 
                         <div class="settings-detail">
-                            <div class="mode-section active" id="section-openai">
+                            <div class="mode-section active" id="section-general">
+                                <div class="setting-card">
+                                    <div class="setting-toggle-row">
+                                        <div class="setting-toggle-info">
+                                            <label for="general-disable-batch">Disable <code>/batch</code> endpoint</label>
+                                            <span class="field-hint">Block requests to <code>/batch</code> and
+                                                <code>/api/translate/batch</code> (HTTP 403) to prevent multi-image bulk abuse.</span>
+                                        </div>
+                                        <label class="setting-switch" aria-label="Disable /batch endpoint">
+                                            <input type="checkbox" id="general-disable-batch" />
+                                            <span class="setting-switch-track"></span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="setting-card">
+                                    <div class="setting-toggle-row">
+                                        <div class="setting-toggle-info">
+                                            <label for="general-enable-queue">Enable Queue</label>
+                                            <span class="field-hint">Limit how many images are processed concurrently. Extra requests
+                                                stay queued in loading state until a slot frees up.</span>
+                                        </div>
+                                        <label class="setting-switch" aria-label="Enable Queue">
+                                            <input type="checkbox" id="general-enable-queue" />
+                                            <span class="setting-switch-track"></span>
+                                        </label>
+                                    </div>
+                                    <div class="setting-subgrid">
+                                        <div class="field" style="margin-bottom:0;">
+                                            <label for="general-queue-max">Max concurrent images</label>
+                                            <input type="number" id="general-queue-max" min="1" max="100" value="10" />
+                                            <span class="field-hint">Default: 10 images processing at once.</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="setting-card">
+                                    <div class="setting-toggle-row">
+                                        <div class="setting-toggle-info">
+                                            <label for="general-enable-rate-limit">Rate Limit</label>
+                                            <span class="field-hint">Restrict each client IP to a maximum number of images per
+                                                rolling time window (HTTP 429 when exceeded).</span>
+                                        </div>
+                                        <label class="setting-switch" aria-label="Rate Limit">
+                                            <input type="checkbox" id="general-enable-rate-limit" />
+                                            <span class="setting-switch-track"></span>
+                                        </label>
+                                    </div>
+                                    <div class="setting-subgrid two-cols">
+                                        <div class="field" style="margin-bottom:0;">
+                                            <label for="general-rate-max">Max images per IP</label>
+                                            <input type="number" id="general-rate-max" min="1" max="1000" value="10" />
+                                            <span class="field-hint">Default: 10 images.</span>
+                                        </div>
+                                        <div class="field" style="margin-bottom:0;">
+                                            <label for="general-rate-window">Time window (seconds)</label>
+                                            <input type="number" id="general-rate-window" min="1" max="3600" value="10" />
+                                            <span class="field-hint">Default: 10 seconds.</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="setting-card">
+                                    <div class="field" style="margin-bottom:0;">
+                                        <label for="general-max-image-mb">Max Image Size (MB)</label>
+                                        <input type="number" id="general-max-image-mb" min="1" max="100" value="8" />
+                                        <span class="field-hint">Maximum allowed size per image across <code>/translate</code>,
+                                            <code>/translateRegion</code>, and <code>/batch</code> (default: 8 MB).</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mode-section" id="section-openai">
                                 <div class="field">
                                     <label for="openai-url">OpenAI-compatible base URL</label>
                                     <input type="url" id="openai-url" placeholder="https://api.deepseek.com"

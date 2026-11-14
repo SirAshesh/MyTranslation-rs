@@ -6,13 +6,16 @@ const viewPanels = {
     settings: document.getElementById("panel-settings")
 };
 
-const modeButtons = Array.from(document.querySelectorAll(".mode-btn"));
+const generalTabBtn = document.getElementById("tab-general-btn");
+const modeButtons = Array.from(document.querySelectorAll(".mode-btn[data-mode]"));
 const modeSections = {
+    general: document.getElementById("section-general"),
     openai: document.getElementById("section-openai"),
     claude: document.getElementById("section-claude"),
     local: document.getElementById("section-local")
 };
 
+let activeSettingsTab = "general";
 let activeMode = "openai";
 let activeModelName = "deepseek-chat";
 let selectedImageDataUrl = "";
@@ -34,6 +37,14 @@ const statKey = document.getElementById("stat-key");
 const statPages = document.getElementById("stat-pages");
 const statPort = document.getElementById("stat-port");
 
+const generalDisableBatchInput = document.getElementById("general-disable-batch");
+const generalEnableQueueInput = document.getElementById("general-enable-queue");
+const generalQueueMaxInput = document.getElementById("general-queue-max");
+const generalEnableRateLimitInput = document.getElementById("general-enable-rate-limit");
+const generalRateMaxInput = document.getElementById("general-rate-max");
+const generalRateWindowInput = document.getElementById("general-rate-window");
+const generalMaxImageMbInput = document.getElementById("general-max-image-mb");
+
 const openaiUrlInput = document.getElementById("openai-url");
 const openaiModelInput = document.getElementById("openai-model");
 const openaiKeyInput = document.getElementById("openai-key");
@@ -50,26 +61,6 @@ const localModelSelect = document.getElementById("local-model");
 const settingsForm = document.getElementById("settings-form");
 const saveBtn = document.getElementById("save-btn");
 const testBtn = document.getElementById("test-btn");
-
-const pgForm = document.getElementById("playground-form");
-const pgFileInput = document.getElementById("pg-file");
-const pgSourceLang = document.getElementById("pg-source-lang");
-const pgTargetLang = document.getElementById("pg-target-lang");
-const pgRunBtn = document.getElementById("pg-run-btn");
-const pgClearBtn = document.getElementById("pg-clear-btn");
-const pgDownloadBtn = document.getElementById("pg-download-btn");
-const pgStatusBox = document.getElementById("pg-status-box");
-const pgSrcFrame = document.getElementById("pg-src-frame");
-const pgOutFrame = document.getElementById("pg-out-frame");
-const pgBoxesTbody = document.getElementById("pg-boxes-tbody");
-
-const chatForm = document.getElementById("chat-form");
-const chatInput = document.getElementById("chat-input");
-const chatSendBtn = document.getElementById("chat-send-btn");
-const chatStream = document.getElementById("chat-stream");
-const chatSrcLang = document.getElementById("chat-src-lang");
-const chatTgtLang = document.getElementById("chat-tgt-lang");
-const chatClearBtn = document.getElementById("chat-clear-btn");
 
 function setBanner(el, state, prefix, text) {
     el.setAttribute("data-state", state);
@@ -97,25 +88,68 @@ gotoSettingsLink.addEventListener("click", (e) => {
     switchView("settings");
 });
 
-function selectMode(mode) {
+function syncGeneralInputStates() {
+    if (generalQueueMaxInput && generalEnableQueueInput) {
+        generalQueueMaxInput.disabled = !generalEnableQueueInput.checked;
+    }
+    if (generalEnableRateLimitInput) {
+        const rateDisabled = !generalEnableRateLimitInput.checked;
+        if (generalRateMaxInput) generalRateMaxInput.disabled = rateDisabled;
+        if (generalRateWindowInput) generalRateWindowInput.disabled = rateDisabled;
+    }
+}
+
+if (generalEnableQueueInput) {
+    generalEnableQueueInput.addEventListener("change", syncGeneralInputStates);
+}
+if (generalEnableRateLimitInput) {
+    generalEnableRateLimitInput.addEventListener("change", syncGeneralInputStates);
+}
+
+function showSettingsTab(tab) {
+    activeSettingsTab = tab;
+    if (generalTabBtn) {
+        const isGeneral = tab === "general";
+        generalTabBtn.setAttribute("data-viewing", isGeneral ? "true" : "false");
+        generalTabBtn.setAttribute("aria-selected", isGeneral ? "true" : "false");
+    }
+    modeButtons.forEach((btn) => {
+        const isMatch = btn.getAttribute("data-mode") === tab;
+        btn.setAttribute("data-viewing", isMatch ? "true" : "false");
+    });
+    Object.keys(modeSections).forEach((k) => {
+        if (modeSections[k]) {
+            modeSections[k].classList.toggle("active", k === tab);
+        }
+    });
+    if (testBtn) {
+        testBtn.hidden = tab === "general";
+    }
+    if (tab === "local" && typeof pollLocalStatus === "function") {
+        pollLocalStatus();
+    }
+}
+
+function selectMode(mode, openTab = true) {
     activeMode = mode;
     modeButtons.forEach((btn) => {
         const isMatch = btn.getAttribute("data-mode") === mode;
         btn.setAttribute("aria-checked", isMatch ? "true" : "false");
     });
-    Object.keys(modeSections).forEach((k) => {
-        if (modeSections[k]) {
-            modeSections[k].classList.toggle("active", k === mode);
-        }
-    });
-    if (mode === "local" && typeof pollLocalStatus === "function") {
-        pollLocalStatus();
+    if (openTab) {
+        showSettingsTab(mode);
     }
+}
+
+if (generalTabBtn) {
+    generalTabBtn.addEventListener("click", () => {
+        showSettingsTab("general");
+    });
 }
 
 modeButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-        selectMode(btn.getAttribute("data-mode"));
+        selectMode(btn.getAttribute("data-mode"), true);
     });
 });
 
@@ -193,6 +227,38 @@ function formatClock() {
     return h + ":" + m + ":" + s;
 }
 
+function parseBoundedInt(inputEl, fallback, min, max) {
+    if (!inputEl) return fallback;
+    const n = parseInt(inputEl.value, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
+}
+
+function applyGeneralSettingsState(s) {
+    if (generalDisableBatchInput) {
+        generalDisableBatchInput.checked = Boolean(s.disable_batch_endpoint);
+    }
+    if (generalEnableQueueInput) {
+        generalEnableQueueInput.checked = Boolean(s.enable_queue);
+    }
+    if (generalQueueMaxInput) {
+        generalQueueMaxInput.value = String(s.queue_max_concurrent ?? 10);
+    }
+    if (generalEnableRateLimitInput) {
+        generalEnableRateLimitInput.checked = Boolean(s.enable_rate_limit);
+    }
+    if (generalRateMaxInput) {
+        generalRateMaxInput.value = String(s.rate_limit_max_images ?? 10);
+    }
+    if (generalRateWindowInput) {
+        generalRateWindowInput.value = String(s.rate_limit_window_secs ?? 10);
+    }
+    if (generalMaxImageMbInput) {
+        generalMaxImageMbInput.value = String(s.max_image_size_mb ?? 8);
+    }
+    syncGeneralInputStates();
+}
+
 async function loadRuntimeState(announce) {
     if (announce) {
         setBanner(homeStatusBox, "loading", "LOADING", "Refreshing runtime status...");
@@ -223,8 +289,11 @@ async function loadRuntimeState(announce) {
         if (mode !== "claude" && mode !== "openai" && mode !== "local" && !(supportsFreeMode && mode === "free")) {
             mode = "openai";
         }
-        selectMode(mode);
+        selectMode(mode, false);
+        showSettingsTab(activeSettingsTab);
         statMode.textContent = formatModeName(mode);
+
+        applyGeneralSettingsState(s);
 
         openaiUrlInput.value = s.openai_base_url || "https://api.deepseek.com";
         openaiModelInput.value = s.openai_model || "deepseek-chat";
@@ -304,7 +373,14 @@ settingsForm.addEventListener("submit", async (e) => {
         claude_base_url: claudeUrlInput.value.trim(),
         claude_model: claudeModelInput.value.trim(),
         claude_api_key: claudeKeyInput.value.trim(),
-        local_model: localModelSelect ? localModelSelect.value : savedLocalModel
+        local_model: localModelSelect ? localModelSelect.value : savedLocalModel,
+        disable_batch_endpoint: generalDisableBatchInput ? generalDisableBatchInput.checked : false,
+        enable_queue: generalEnableQueueInput ? generalEnableQueueInput.checked : false,
+        queue_max_concurrent: parseBoundedInt(generalQueueMaxInput, 10, 1, 100),
+        enable_rate_limit: generalEnableRateLimitInput ? generalEnableRateLimitInput.checked : false,
+        rate_limit_max_images: parseBoundedInt(generalRateMaxInput, 10, 1, 1000),
+        rate_limit_window_secs: parseBoundedInt(generalRateWindowInput, 10, 1, 3600),
+        max_image_size_mb: parseBoundedInt(generalMaxImageMbInput, 8, 1, 100)
     }, window.freeModeHandlers ? window.freeModeHandlers.buildPayload() : {});
 
     try {
@@ -373,216 +449,5 @@ testBtn.addEventListener("click", async () => {
     }
 });
 
-pgFileInput.addEventListener("change", () => {
-    const file = pgFileInput.files && pgFileInput.files[0];
-    if (!file) {
-        selectedImageDataUrl = "";
-        pgSrcFrame.innerHTML = '<span class="empty-text">[EMPTY] No source image selected.</span>';
-        return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-        selectedImageDataUrl = String(reader.result || "");
-        pgSrcFrame.innerHTML = "";
-        const img = document.createElement("img");
-        img.src = selectedImageDataUrl;
-        img.alt = "Selected source comic page";
-        pgSrcFrame.appendChild(img);
-        setBanner(pgStatusBox, "loading", "READY", "Loaded " + file.name + " (" + Math.round(file.size / 1024) + " KB). Click Run translation.");
-    };
-    reader.readAsDataURL(file);
-});
-
-pgClearBtn.addEventListener("click", () => {
-    pgFileInput.value = "";
-    selectedImageDataUrl = "";
-    pgDownloadBtn.style.display = "none";
-    pgSrcFrame.innerHTML = '<span class="empty-text">[EMPTY] No source image selected.</span>';
-    pgOutFrame.innerHTML = '<span class="empty-text">[EMPTY] Run translation to render output image.</span>';
-    pgBoxesTbody.innerHTML = '<tr><td colspan="4" class="mono" style="color:var(--muted);">[EMPTY] No dialogue boxes processed in this session.</td></tr>';
-    setBanner(pgStatusBox, "loading", "IDLE", "Select an image file above and click Run translation.");
-});
-
-pgForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    if (!selectedImageDataUrl) {
-        setBanner(pgStatusBox, "err", "ERROR", "No image selected. Choose a .png, .jpg, or .webp file first.");
-        pgFileInput.focus();
-        return;
-    }
-
-    pgRunBtn.disabled = true;
-    pgRunBtn.textContent = "Translating...";
-    setBanner(pgStatusBox, "loading", "LOADING", "Running DirectML OCR, translation, and bubble inpainting...");
-
-    const bodyParams = new URLSearchParams();
-    bodyParams.set("src", selectedImageDataUrl);
-    bodyParams.set("sourceLang", pgSourceLang.value);
-    bodyParams.set("targetLang", pgTargetLang.value);
-
-    const t0 = performance.now();
-    try {
-        const res = await fetch("/translate", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: bodyParams.toString()
-        });
-        const data = await res.json();
-        const elapsedMs = Math.round(performance.now() - t0);
-
-        if (!data.success) {
-            setBanner(pgStatusBox, "err", "ERROR", data.message || "Translation pipeline failed.");
-            return;
-        }
-
-        if (data.img) {
-            const outDataUrl = "data:image/webp;base64," + data.img;
-            pgOutFrame.innerHTML = "";
-            const outImg = document.createElement("img");
-            outImg.src = outDataUrl;
-            outImg.alt = "Translated comic page output";
-            pgOutFrame.appendChild(outImg);
-            pgDownloadBtn.href = outDataUrl;
-            pgDownloadBtn.style.display = "inline-flex";
-        }
-
-        const boxes = (data.imgMap && Array.isArray(data.imgMap.boxes)) ? data.imgMap.boxes : [];
-        if (boxes.length === 0) {
-            pgBoxesTbody.innerHTML = '<tr><td colspan="4" class="mono" style="color:var(--muted);">[EMPTY] No speech bubbles detected on this image.</td></tr>';
-        } else {
-            pgBoxesTbody.innerHTML = boxes.map((b, idx) => {
-                const g = b.geometry || { X: 0, Y: 0, width: 0, height: 0 };
-                return `<tr>
-                    <td class="mono">${idx + 1}</td>
-                    <td>${escapeHtml(b.text || "")}</td>
-                    <td>${escapeHtml(b.target || "")}</td>
-                    <td class="mono">${g.X}, ${g.Y}, ${g.width}x${g.height}</td>
-                </tr>`;
-            }).join("");
-        }
-
-        setBanner(pgStatusBox, "ok", "DONE", "Translated " + boxes.length + " dialogue box(es) in " + elapsedMs + " ms.");
-        loadRuntimeState(false);
-    } catch (err) {
-        setBanner(pgStatusBox, "err", "ERROR", "Request failed during /translate: " + err.message);
-    } finally {
-        pgRunBtn.disabled = false;
-        pgRunBtn.textContent = "Run translation";
-    }
-});
-
-function escapeHtml(str) {
-    return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
-}
-
-chatClearBtn.addEventListener("click", () => {
-    chatStream.innerHTML = `
-        <div class="chat-row incoming">
-            <div class="chat-bubble bubble-incoming">
-                <div class="bubble-meta">
-                    <span>MyTranslation</span>
-                    <span>SYSTEM</span>
-                </div>
-                <div class="bubble-body">[READY] Enter dialogue text in the field below. Translated responses appear here on the left side in real time.</div>
-            </div>
-        </div>
-    `;
-    chatInput.value = "";
-    chatInput.focus();
-});
-
-chatInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.ctrlKey || !e.shiftKey)) {
-        e.preventDefault();
-        chatForm.dispatchEvent(new Event("submit", { cancelable: true }));
-    }
-});
-
-chatForm.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const text = chatInput.value.trim();
-    if (!text) {
-        chatInput.focus();
-        return;
-    }
-
-    const srcLang = chatSrcLang.value;
-    const tgtLang = chatTgtLang.value;
-    const timeStr = formatClock();
-    const replyId = "reply-" + Date.now();
-
-    chatStream.insertAdjacentHTML("beforeend", `
-        <div class="chat-row outgoing">
-            <div class="chat-bubble bubble-outgoing">
-                <div class="bubble-meta">You &bull; ${timeStr}</div>
-                <div class="bubble-body">${escapeHtml(text)}</div>
-            </div>
-        </div>
-        <div class="chat-row incoming" id="${replyId}">
-            <div class="chat-bubble bubble-incoming">
-                <div class="bubble-meta">
-                    <span>MyTranslation (${escapeHtml(activeModelName)})</span>
-                    <span class="bubble-time">${timeStr}</span>
-                </div>
-                <div class="bubble-body">[TRANSLATING] Processing dialogue with ${escapeHtml(activeModelName)}...</div>
-            </div>
-        </div>
-    `);
-
-    chatInput.value = "";
-    chatSendBtn.disabled = true;
-    chatSendBtn.textContent = "Translating...";
-    chatStream.scrollTop = chatStream.scrollHeight;
-
-    const replyRow = document.getElementById(replyId);
-    const replyBody = replyRow ? replyRow.querySelector(".bubble-body") : null;
-    const replyTime = replyRow ? replyRow.querySelector(".bubble-time") : null;
-
-    try {
-        const res = await fetch("/api/translate/text", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                text: text,
-                sourceLang: srcLang,
-                targetLang: tgtLang
-            })
-        });
-        const data = await res.json();
-        if (data.success && replyBody) {
-            replyBody.textContent = data.target || "";
-            if (replyTime) replyTime.textContent = data.elapsed_ms + " ms \u2022 " + formatClock();
-
-            const actions = document.createElement("div");
-            actions.className = "bubble-actions";
-            const copyBtn = document.createElement("button");
-            copyBtn.type = "button";
-            copyBtn.className = "bubble-btn";
-            copyBtn.textContent = "Copy text";
-            copyBtn.addEventListener("click", async () => {
-                try {
-                    await navigator.clipboard.writeText(data.target || "");
-                    copyBtn.textContent = "Copied";
-                    setTimeout(() => { copyBtn.textContent = "Copy text"; }, 1500);
-                } catch (_) {}
-            });
-            actions.appendChild(copyBtn);
-            replyRow.querySelector(".chat-bubble").appendChild(actions);
-        } else if (replyBody) {
-            replyBody.textContent = "[ERROR] " + (data.message || "Translation failed.");
-            replyBody.style.color = "var(--err-text)";
-        }
-    } catch (err) {
-        if (replyBody) {
-            replyBody.textContent = "[ERROR] Network error during translation: " + err.message;
-            replyBody.style.color = "var(--err-text)";
-        }
-    } finally {
-        chatSendBtn.disabled = false;
-        chatSendBtn.textContent = "Send";
-        chatStream.scrollTop = chatStream.scrollHeight;
-        chatInput.focus();
-    }
-});
-
+showSettingsTab(activeSettingsTab);
 loadRuntimeState(false);

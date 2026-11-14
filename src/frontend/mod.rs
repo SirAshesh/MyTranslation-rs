@@ -77,17 +77,19 @@ pub fn render_dashboard_html() -> String {
     let comp_css = include_str!("css/components.css");
     let body_template = include_str!("html/index.html");
     let app_js = include_str!("js/app.js");
+    let workspace_js = include_str!("js/workspace.js");
     let local_js = include_str!("js/local.js");
 
     #[cfg(feature = "free-mode")]
-    let (free_tab_html, free_section_html, free_js) = (
+    let (free_css, free_tab_html, free_section_html, free_js) = (
+        free::FREE_CSS,
         free::FREE_TAB_HTML,
         free::FREE_SECTION_HTML,
         free::FREE_JS,
     );
 
     #[cfg(not(feature = "free-mode"))]
-    let (free_tab_html, free_section_html, free_js) = ("", "", "");
+    let (free_css, free_tab_html, free_section_html, free_js) = ("", "", "", "");
 
     let body_html = body_template
         .replace("<!-- STATS_TAB_BUTTON -->", stats::STATS_TAB_HTML)
@@ -106,11 +108,13 @@ pub fn render_dashboard_html() -> String {
 {}
 {}
 {}
+{}
     </style>
 </head>
 <body>
 {}
     <script>
+{}
 {}
 {}
 {}
@@ -121,8 +125,10 @@ pub fn render_dashboard_html() -> String {
         base_css,
         comp_css,
         stats::STATS_CSS,
+        free_css,
         body_html,
         app_js,
+        workspace_js,
         local_js,
         free_js,
         stats::STATS_JS

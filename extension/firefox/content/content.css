@@ -6,14 +6,15 @@
 .mytrans-overlay {
   position: fixed;
   z-index: 2147483645;
-  background: rgba(15, 23, 42, 0.72);
+  background: rgba(250, 250, 250, 0.82);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #f8fafc;
+  color: #111113;
   font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   pointer-events: none;
   border-radius: 4px;
   backdrop-filter: blur(2px);
@@ -22,8 +23,8 @@
 .mytrans-spinner {
   width: 24px;
   height: 24px;
-  border: 3px solid rgba(255, 255, 255, 0.28);
-  border-top-color: #60a5fa;
+  border: 3px solid #d4d4d8;
+  border-top-color: #18181b;
   border-radius: 50%;
   animation: mytrans-spin 0.7s linear infinite;
   margin-bottom: 8px;
@@ -40,14 +41,14 @@
   inset: 0;
   z-index: 2147483646;
   cursor: crosshair;
-  background: rgba(15, 23, 42, 0.22);
+  background: rgba(17, 17, 19, 0.16);
 }
 
 #mytrans-sc-selection {
   position: fixed;
   z-index: 2147483647;
-  border: 2px dashed #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
+  border: 2px dashed #18181b;
+  background: rgba(24, 24, 27, 0.1);
   pointer-events: none;
   box-sizing: border-box;
   display: none;
@@ -60,20 +61,21 @@
   z-index: 2147483647;
   max-width: 340px;
   padding: 10px 14px;
-  border-radius: 8px;
-  background: #0f172a;
-  color: #f8fafc;
-  border: 1px solid #334155;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border-radius: 6px;
+  background: #fafafa;
+  color: #111113;
+  border: 1px solid #d4d4d8;
+  box-shadow: 0 10px 25px rgba(17, 17, 19, 0.14);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 12.5px;
   line-height: 1.45;
   word-break: break-word;
 }
 
 .mytrans-toast.is-error {
-  border-color: #ef4444;
-  background: #450a0a;
+  border-color: rgba(185, 28, 28, 0.45);
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .mytrans-region-card {
@@ -83,12 +85,12 @@
   z-index: 2147483647;
   width: 340px;
   max-width: calc(100vw - 32px);
-  background: #0f172a;
-  color: #f8fafc;
-  border: 1px solid #334155;
-  border-radius: 10px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #fafafa;
+  color: #111113;
+  border: 1px solid #d4d4d8;
+  border-radius: 6px;
+  box-shadow: 0 14px 36px rgba(17, 17, 19, 0.16);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
   overflow: hidden;
 }
@@ -98,19 +100,24 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  background: #1e293b;
-  border-bottom: 1px solid #334155;
+  background: #f4f4f5;
+  border-bottom: 1px solid #d4d4d8;
   font-weight: 600;
+  color: #111113;
 }
 
 .mytrans-region-close {
   border: none;
   background: transparent;
-  color: #cbd5e1;
+  color: #52525b;
   font-size: 16px;
   cursor: pointer;
   line-height: 1;
   padding: 2px 6px;
+}
+
+.mytrans-region-close:hover {
+  color: #111113;
 }
 
 .mytrans-region-body {
@@ -124,14 +131,15 @@
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #94a3b8;
+  color: #52525b;
 }
 
 .mytrans-region-text {
   padding: 8px;
-  border-radius: 6px;
-  background: #1e293b;
-  border: 1px solid #334155;
+  border-radius: 4px;
+  background: #f4f4f5;
+  border: 1px solid #d4d4d8;
+  color: #111113;
   white-space: pre-wrap;
   max-height: 150px;
   overflow-y: auto;
@@ -145,13 +153,18 @@
 }
 
 .mytrans-region-btn {
-  border: 1px solid #475569;
-  background: #2563eb;
-  color: #ffffff;
-  border-radius: 6px;
+  border: 1px solid #18181b;
+  background: #18181b;
+  color: #fafafa;
+  border-radius: 4px;
   padding: 5px 10px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+}
+
+.mytrans-region-btn:hover {
+  background: #27272a;
 }
 
 #mytrans-floating-btn {
@@ -160,17 +173,21 @@
   width: 44px;
   height: 44px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.85);
-  background: #2563eb;
-  color: #ffffff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  border: 2px solid #d4d4d8;
+  background: #fafafa;
+  color: #18181b;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(17, 17, 19, 0.18);
   cursor: grab;
   user-select: none;
 }
 
+#mytrans-floating-btn:hover {
+  background: #f4f4f5;
+  border-color: #71717a;
+}

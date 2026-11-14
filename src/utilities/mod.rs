@@ -5,6 +5,7 @@ pub mod hardware;
 pub mod image_io;
 pub mod metrics;
 pub mod storage;
+pub mod traffic_guard;
 
 pub use archive::*;
 pub use download::*;
@@ -13,3 +14,4 @@ pub use hardware::*;
 pub use image_io::*;
 pub use metrics::*;
 pub use storage::*;
+pub use traffic_guard::*;
