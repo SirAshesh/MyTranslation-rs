@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'README.md'
-      - 'sample/**'
+    paths:
+      - 'src/**'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -18,6 +17,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: release-${{ github.ref }}
@@ -226,3 +226,45 @@ jobs:
             chrome-extension.zip
             firefox-extension.zip
           generate_release_notes: true
+
+  build-docker:
+    name: Build & Push Docker Image (GHCR)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve Docker metadata
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          if [ "${{ github.ref_type }}" = "tag" ] && [ -n "${{ github.ref_name }}" ]; then
+            TAGS="${IMAGE_NAME}:${{ github.ref_name }},${IMAGE_NAME}:latest"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ] && [ "${{ inputs.version }}" != "latest" ]; then
+            TAGS="${IMAGE_NAME}:${{ inputs.version }},${IMAGE_NAME}:latest"
+          else
+            TAGS="${IMAGE_NAME}:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

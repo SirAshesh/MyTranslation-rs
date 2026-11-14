@@ -7,14 +7,14 @@
 
 [![MyTranslation-rs Preview](sample/preview.gif)](https://id.pinterest.com/pin/1005569423056533419/)
 
-A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device LLMs (LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
+A fast, lightweight, and native Rust translation and typesetting server for manga, manhwa, and comics. It features built-in RapidOCR (DirectML on Windows, high-performance ONNX Runtime on Linux), stroke-level bubble cleaning that preserves screentones, automatic typesetting with `comic_bold.ttf`, and translation powered by cloud APIs (DeepSeek, OpenAI, Claude) or fully local on-device models (Tencent HY-MT1.5 1.8B and LiquidAI LFM3 1.7B via llama.cpp with CUDA, Vulkan, or CPU acceleration).
 
 ## Key Features
 - **Cross-Platform**: Runs natively on both **Windows 10/11 (x64)** and **Linux / Ubuntu (x64)**.
 - **Single Standalone Binary**: No Python environment, PyTorch, or heavy runtime dependencies required.
 - **Multilingual Support**: Supports horizontal comics (LTR) and vertical Japanese manga (tategaki, RTL) with automatic line joining and junk/SFX filtering.
 - **Flexible Translation Backends**:
-  - **Local Model**: 1-click built-in download and execution of LiquidAI LFM3 1.7B with automatic GPU detection (NVIDIA CUDA, AMD/Intel Vulkan, or CPU).
+  - **Local Model**: 1-click built-in download and execution of Tencent HY-MT1.5 1.8B or LiquidAI LFM3 1.7B with automatic hardware detection (NVIDIA CUDA, AMD/Intel Vulkan, or CPU).
   - **Cloud APIs**: OpenAI-compatible (DeepSeek, OpenAI, OpenRouter) and Claude-compatible endpoints.
 - **Browser Extension Ready**: Includes standalone **MyTranslation** extensions for Chrome (`chrome-extension.zip`) and Firefox (`firefox-extension.zip`).
 
@@ -26,37 +26,10 @@ A fast, lightweight, and native Rust translation and typesetting server for mang
 
 Source: https://id.pinterest.com/pin/614600680437863284/
 
-## Quick Start (Prebuilt Release)
-### Windows (x64)
+## Quick Start
 
-1. Download `MyTranslation-rs-windows-x64.zip` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
-2. Extract the archive into a folder.
-3. Run `server-rs.exe`.
-4. Open your browser at `http://127.0.0.1:5000`.
-
-### Linux / Ubuntu (x64)
-
-You can install, update, and run the server using the single-line automated runner:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/SirAshesh/MyTranslation-rs/main/run.sh -o run.sh
-chmod +x run.sh
-./run.sh
-```
-
-The script automatically detects updates from GitHub Releases, downloads missing binaries/models, and launches the server.
-
-Alternatively, for manual installation:
-1. Download `MyTranslation-rs-ubuntu-x64.tar.gz` from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page.
-2. Extract the archive:
-   ```bash
-   tar -xzf MyTranslation-rs-ubuntu-x64.tar.gz
-   cd MyTranslation-rs
-   chmod +x server-rs run.sh
-   ./run.sh
-   ```
-3. Open `http://127.0.0.1:5000` in your browser.
-
+1. **[Installation](docs/Installation.md)** - Install and start `MyTranslation-rs` on Windows (x64), Linux/Ubuntu (x64), or build from source.
+2. **[Connect Local Client](docs/Connect-Local-Client.md)** - Configure the local model/API dashboard
 
 ## Configuration
 
@@ -72,46 +45,12 @@ Settings are saved in `config.json` in the application directory:
   "claude_base_url": "https://api.anthropic.com",
   "claude_model": "claude-3-5-sonnet-latest",
   "claude_api_key": "",
-  "local_model": "Q6_K"
+  "local_model": "HY-MT1.5-1.8B-Q4_K_M"
 }
 ```
 
-- **Web Dashboard**: Navigate to `http://127.0.0.1:5000` to adjust settings, check detected GPU hardware, and download local models directly from the UI.
+- **Web Dashboard**: Navigate to `http://127.0.0.1:5000` to adjust settings, check detected GPU/RAM hardware, and download local models directly from the UI.
 - **Port**: Customize the listening port by modifying `"port"` in `config.json` or passing `PORT=5000 ./server-rs`.
-
-## Connecting the Browser Extension
-
-1. For **MyTranslation Extension**, download `chrome-extension.zip` (Chrome/Brave/Edge) or `firefox-extension.zip` (Firefox) from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page and load the unpacked folder (or use `extension/chrome` / `extension/firefox` from this repo).
-2. Open the **ImageTrans Extension or MyTranslation Extension** options and set the **Server URL** to:
-   ```
-   http://127.0.0.1:5000
-   ```
-3. If using ImageTrans, set **Translation Mode** to `ImageTrans (local or remote server)`. Click **Test Connection** / **Check** to verify connectivity.
-4. Save your settings. Now you can capture and translate comic, manga, or webtoon pages directly in your browser.
-
-
-## Building from Source
-
-### Prerequisites
-
-- [Rust Toolchain](https://rustup.rs/) (1.75 or newer)
-- **Windows**: Windows 10/11 x64, DirectX 12 compatible GPU for DirectML acceleration.
-- **Ubuntu / Debian**:
-  ```bash
-  sudo apt-get update
-  sudo apt-get install -y build-essential libssl-dev pkg-config
-  ```
-
-### Build Commands
-
-```bash
-git clone https://github.com/SirAshesh/MyTranslation-rs.git
-cd MyTranslation-rs
-cargo build --release
-```
-
-- **Windows binary**: `target/release/server-rs.exe` (requires `DirectML.dll` from the target folder).
-- **Linux binary**: `target/release/server-rs`.
 
 ## Credit
 - xulihang / [ImageTrans Chrome Extension](https://github.com/xulihang/ImageTrans_chrome_extension)

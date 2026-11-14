@@ -20,23 +20,7 @@ use tower_http::cors::CorsLayer;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-fn load_config() -> (AppConfig, String) {
-    let config_path = if std::path::Path::new("config.json").exists() {
-        "config.json"
-    } else if std::path::Path::new("Server-rs/config.json").exists() {
-        "Server-rs/config.json"
-    } else {
-        ""
-    };
-
-    if !config_path.is_empty() {
-        if let Ok(data) = std::fs::read_to_string(config_path) {
-            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&data) {
-                return (cfg, config_path.to_string());
-            }
-        }
-    }
-
+fn default_config_from_env() -> AppConfig {
     if std::path::Path::new(".env").exists() {
         dotenvy::dotenv().ok();
     } else if std::path::Path::new("Server-rs/.env").exists() {
@@ -55,8 +39,44 @@ fn load_config() -> (AppConfig, String) {
     if let Some(recommended) = recommended_local_model() {
         cfg.local_model = recommended;
     }
+    cfg
+}
 
-    (cfg, "config.json".to_string())
+fn load_config() -> (AppConfig, String) {
+    if let Ok(data_dir) = std::env::var("DATA_DIR") {
+        let trimmed = data_dir.trim();
+        if !trimmed.is_empty() {
+            let _ = std::fs::create_dir_all(trimmed);
+            let target = std::path::Path::new(trimmed).join("config.json");
+            let target_str = target.to_string_lossy().into_owned();
+            if target.exists() {
+                if let Ok(data) = std::fs::read_to_string(&target) {
+                    if let Ok(cfg) = serde_json::from_str::<AppConfig>(&data) {
+                        return (cfg, target_str);
+                    }
+                }
+            }
+            return (default_config_from_env(), target_str);
+        }
+    }
+
+    let config_path = if std::path::Path::new("config.json").exists() {
+        "config.json"
+    } else if std::path::Path::new("Server-rs/config.json").exists() {
+        "Server-rs/config.json"
+    } else {
+        ""
+    };
+
+    if !config_path.is_empty() {
+        if let Ok(data) = std::fs::read_to_string(config_path) {
+            if let Ok(cfg) = serde_json::from_str::<AppConfig>(&data) {
+                return (cfg, config_path.to_string());
+            }
+        }
+    }
+
+    (default_config_from_env(), "config.json".to_string())
 }
 
 #[tokio::main]

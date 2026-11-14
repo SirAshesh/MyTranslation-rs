@@ -1,0 +1,18 @@
+services:
+  mytranslation:
+    image: ghcr.io/sirashesh/mytranslation-rs:latest
+    build: .
+    container_name: mytranslation-rs
+    restart: unless-stopped
+    mem_limit: 4g
+    ports:
+      - "5000:5000"
+    environment:
+      PORT: "5000"
+      DATA_DIR: "/app/data"
+      RUST_LOG: "info"
+    volumes:
+      - mytranslation_data:/app/data
+
+volumes:
+  mytranslation_data:
