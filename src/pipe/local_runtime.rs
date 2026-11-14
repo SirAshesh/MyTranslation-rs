@@ -1,6 +1,6 @@
 use crate::model::{
-    find_local_model, LocalModelSpec, LocalPhase, LocalRuntimeStatus, LocalStatusResponse,
-    EngineBackend, LOCAL_MODEL_CATALOG, LOCAL_SERVER_PORT,
+    find_local_model, EngineBackend, LocalModelFamily, LocalModelSpec, LocalPhase,
+    LocalRuntimeStatus, LocalStatusResponse, LOCAL_MODEL_CATALOG, LOCAL_SERVER_PORT,
 };
 use crate::utilities::{download_file, extract_archive, find_file_recursive, get_hardware_info};
 use serde::Deserialize;
@@ -112,14 +112,15 @@ impl LocalRuntime {
 
         let engine_path = self.ensure_engine(backend).await?;
         let model_path = self.ensure_model(spec).await?;
-        self.spawn_server(&engine_path, &model_path, backend).await?;
+        self.spawn_server(&engine_path, &model_path, backend, spec.family)
+            .await?;
         self.wait_until_ready().await?;
 
         let mut status = self.lock_status();
         status.phase = LocalPhase::Running;
-        status.message = format!("Running LFM3 1.7B ({})", spec.quant);
+        status.message = format!("Running {}", spec.label());
         status.active_quant = Some(spec.quant.to_string());
-        info!("Local model server is ready with {}", spec.quant);
+        info!("Local model server is ready with {}", spec.label());
         Ok(())
     }
 
@@ -199,7 +200,10 @@ impl LocalRuntime {
             return Ok(model_path);
         }
 
-        self.set_phase(LocalPhase::DownloadingModel, format!("Downloading LFM3 1.7B ({})...", spec.quant));
+        self.set_phase(
+            LocalPhase::DownloadingModel,
+            format!("Downloading {}...", spec.label()),
+        );
         download_file(&self.client, &spec.download_url(), &model_path, |done, total| {
             self.report_progress(done, total)
         })
@@ -212,6 +216,7 @@ impl LocalRuntime {
         engine_path: &Path,
         model_path: &Path,
         backend: EngineBackend,
+        family: LocalModelFamily,
     ) -> Result<(), String> {
         let log_path = self.log_path();
         let log_file = std::fs::File::create(&log_path)
@@ -227,11 +232,13 @@ impl LocalRuntime {
             .args(["--host", "127.0.0.1", "--port"])
             .arg(LOCAL_SERVER_PORT.to_string())
             .args(["-c", CONTEXT_SIZE])
-            .args(["--chat-template-kwargs", r#"{"enable_thinking":false}"#])
             .stdin(Stdio::null())
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(error_log))
             .kill_on_drop(true);
+        if family == LocalModelFamily::Lfm3 {
+            command.args(["--chat-template-kwargs", r#"{"enable_thinking":false}"#]);
+        }
         if backend.offloads_to_gpu() {
             command.args(["-ngl", "99"]);
         }

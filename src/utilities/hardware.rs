@@ -1,5 +1,6 @@
 use crate::model::{
-    CpuInfo, EngineBackend, GpuInfo, HardwareResponse, LocalModelOption, LOCAL_MODEL_CATALOG,
+    CpuInfo, EngineBackend, GpuInfo, HardwareResponse, LocalModelFamily, LocalModelOption,
+    LocalModelSpec, LOCAL_MODEL_CATALOG,
 };
 use std::process::Command;
 use std::sync::RwLock;
@@ -200,36 +201,77 @@ fn select_backend(gpu: Option<&GpuInfo>) -> EngineBackend {
     }
 }
 
-fn build_model_options(backend: EngineBackend, vram_mb: u64) -> Vec<LocalModelOption> {
-    let usable_vram_mb = if backend.offloads_to_gpu() { vram_mb } else { 0 };
-    let recommended_quant = LOCAL_MODEL_CATALOG
+fn fits_hardware(
+    spec: &LocalModelSpec,
+    backend: EngineBackend,
+    vram_mb: u64,
+    ram_gb: f64,
+) -> bool {
+    if backend.offloads_to_gpu() {
+        return spec.min_vram_mb <= vram_mb;
+    }
+    spec.min_ram_gb <= ram_gb
+}
+
+fn pick_recommended_quant(
+    backend: EngineBackend,
+    vram_mb: u64,
+    ram_gb: f64,
+) -> Option<&'static str> {
+    LOCAL_MODEL_CATALOG
         .iter()
         .rev()
-        .find(|spec| spec.min_vram_mb <= usable_vram_mb)
-        .map(|spec| spec.quant);
+        .filter(|spec| spec.family == LocalModelFamily::HyMt15)
+        .find(|spec| fits_hardware(spec, backend, vram_mb, ram_gb))
+        .or_else(|| {
+            LOCAL_MODEL_CATALOG
+                .iter()
+                .rev()
+                .find(|spec| fits_hardware(spec, backend, vram_mb, ram_gb))
+        })
+        .map(|spec| spec.quant)
+}
+
+fn build_model_options(
+    backend: EngineBackend,
+    vram_mb: u64,
+    ram_gb: f64,
+) -> Vec<LocalModelOption> {
+    let recommended_quant = pick_recommended_quant(backend, vram_mb, ram_gb);
 
     LOCAL_MODEL_CATALOG
         .iter()
         .map(|spec| LocalModelOption {
             quant: spec.quant.to_string(),
+            family: spec.family.key().to_string(),
+            name: spec.label(),
             size_mb: spec.size_bytes / (1024 * 1024),
             recommended: Some(spec.quant) == recommended_quant,
         })
         .collect()
 }
 
+pub fn recommended_local_model() -> Option<String> {
+    get_hardware_info(false)
+        .models
+        .into_iter()
+        .find(|model| model.recommended)
+        .map(|model| model.quant)
+}
+
 fn build_hardware_response(probe: ProbeResult) -> HardwareResponse {
     let gpu = probe.gpus.into_iter().max_by_key(|gpu| gpu.vram_mb);
     let backend = select_backend(gpu.as_ref());
     let vram_mb = gpu.as_ref().map_or(0, |gpu| gpu.vram_mb);
+    let ram_gb = (probe.ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
 
     HardwareResponse {
         success: true,
         cpu: probe.cpu,
         gpu,
-        ram_gb: (probe.ram_bytes as f64 / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0,
+        ram_gb,
         backend,
-        models: build_model_options(backend, vram_mb),
+        models: build_model_options(backend, vram_mb, ram_gb),
     }
 }
 
@@ -266,8 +308,25 @@ mod tests {
 
     #[test]
     fn recommends_quant_that_fits_available_memory() {
-        assert_eq!(recommended_quant(&build_model_options(EngineBackend::Vulkan, 8176)), Some("Q8_0"));
-        assert_eq!(recommended_quant(&build_model_options(EngineBackend::Vulkan, 3072)), Some("Q6_K"));
-        assert_eq!(recommended_quant(&build_model_options(EngineBackend::Cpu, 0)), Some("Q4_K_M"));
+        assert_eq!(
+            recommended_quant(&build_model_options(EngineBackend::Vulkan, 8176, 16.0)),
+            Some("HY-MT1.5-1.8B-Q8_0")
+        );
+        assert_eq!(
+            recommended_quant(&build_model_options(EngineBackend::Vulkan, 3072, 8.0)),
+            Some("HY-MT1.5-1.8B-Q6_K")
+        );
+        assert_eq!(
+            recommended_quant(&build_model_options(EngineBackend::Cpu, 0, 5.0)),
+            Some("HY-MT1.5-1.8B-Q4_K_M")
+        );
+        assert_eq!(
+            recommended_quant(&build_model_options(EngineBackend::Cpu, 0, 12.0)),
+            Some("HY-MT1.5-1.8B-Q6_K")
+        );
+        assert_eq!(
+            recommended_quant(&build_model_options(EngineBackend::Cpu, 0, 16.0)),
+            Some("HY-MT1.5-1.8B-Q8_0")
+        );
     }
 }

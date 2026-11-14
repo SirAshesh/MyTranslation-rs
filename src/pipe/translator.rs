@@ -1,9 +1,9 @@
-use crate::model::{AppConfig, Bubble, SaveSettingsForm, TestKeyRequest};
 use super::llm_client::{LlmClient, LlmTranslationOutput};
 use super::local_runtime::LocalRuntime;
 use super::prompts::{
     normalize_bubble_text, resolve_source_language_label, resolve_target_language_label,
 };
+use crate::model::{format_local_model_label, AppConfig, Bubble, SaveSettingsForm, TestKeyRequest};
 use crate::utilities::LlmUsageStats;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -197,7 +197,7 @@ impl Translator {
         let cfg = self.get_config().await;
         match cfg.translation_mode.as_str() {
             "claude" => format!("Claude ({})", cfg.claude_model),
-            "local" => format!("Local ({})", cfg.local_model),
+            "local" => format_local_model_label(&cfg.local_model),
             #[cfg(feature = "free-mode")]
             "free" => self
                 .free_active_summary(&cfg)

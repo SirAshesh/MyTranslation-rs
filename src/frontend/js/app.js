@@ -55,7 +55,7 @@ const claudeModelInput = document.getElementById("claude-model");
 const claudeKeyInput = document.getElementById("claude-key");
 const toggleClaudeKeyBtn = document.getElementById("toggle-claude-key");
 
-let savedLocalModel = "Q6_K";
+let savedLocalModel = "";
 const localModelSelect = document.getElementById("local-model");
 
 const settingsForm = document.getElementById("settings-form");
@@ -309,7 +309,7 @@ async function loadRuntimeState(announce) {
 
         if (s.local_model) {
             savedLocalModel = s.local_model;
-            if (localModelSelect) {
+            if (localModelSelect && Array.from(localModelSelect.options).some(o => o.value === s.local_model)) {
                 localModelSelect.value = s.local_model;
             }
         }
@@ -319,7 +319,10 @@ async function loadRuntimeState(announce) {
             statModel.textContent = activeModelName;
             statKey.textContent = s.claude_key_configured ? s.claude_masked_key : "Not set";
         } else if (mode === "local") {
-            activeModelName = "LiquidAI LFM3 1.7B (" + (s.local_model || "Q6_K") + ")";
+            const localId = s.local_model || savedLocalModel || "HY-MT1.5-1.8B-Q4_K_M";
+            activeModelName = typeof formatLocalOptionName === "function"
+                ? formatLocalOptionName(localId)
+                : localId;
             statModel.textContent = activeModelName;
             statKey.textContent = "Offline (Local)";
         } else if (mode === "free" && supportsFreeMode) {

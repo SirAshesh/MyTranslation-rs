@@ -1,4 +1,5 @@
 const localHardware = document.getElementById("local-hardware");
+const localAutoBtn = document.getElementById("local-auto-btn");
 const localProgress = document.getElementById("local-progress");
 const localProgressFill = document.getElementById("local-progress-fill");
 const localStatus = document.getElementById("local-status");
@@ -6,12 +7,48 @@ const localStartBtn = document.getElementById("local-start-btn");
 const localStopBtn = document.getElementById("local-stop-btn");
 
 let localPollTimer = null;
+let hardwareModels = [];
+let recommendedLocalQuant = "";
 
-async function loadHardwareInfo() {
+function formatLocalOptionName(quant) {
+    const match = hardwareModels.find(m => m.quant === quant);
+    if (match && match.name) return match.name;
+    if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT1.5-1.8B-")) {
+        return "Tencent HY-MT1.5 1.8B (" + quant.slice("HY-MT1.5-1.8B-".length) + ")";
+    }
+    return quant ? "LiquidAI LFM3 1.7B (" + quant + ")" : "Local";
+}
+
+function buildLocalOptionHtml(m) {
+    const rec = m.recommended ? " \u2014 Recommended" : "";
+    const gb = (m.size_mb / 1024).toFixed(2);
+    const label = m.name || formatLocalOptionName(m.quant);
+    return `<option value="${escapeHtml(m.quant)}">${escapeHtml(label)} (${gb} GB)${rec}</option>`;
+}
+
+function renderLocalModelOptions(models) {
+    const hymt = models.filter(m => m.family === "hy-mt1.5");
+    const lfm3 = models.filter(m => m.family !== "hy-mt1.5");
+    const sections = [];
+    if (hymt.length > 0) {
+        sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (lfm3.length > 0) {
+        sections.push(`<optgroup label="LiquidAI LFM3 1.7B (General compact LLM)">${lfm3.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    return sections.join("");
+}
+
+async function loadHardwareInfo(forceRefresh, selectRecommended) {
     try {
-        const res = await fetch("/api/hardware");
+        const endpoint = forceRefresh ? "/api/hardware?refresh=true" : "/api/hardware";
+        const res = await fetch(endpoint);
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
+
+        hardwareModels = Array.isArray(data.models) ? data.models : [];
+        const recModel = hardwareModels.find(m => m.recommended) || hardwareModels[0] || null;
+        recommendedLocalQuant = recModel ? recModel.quant : "";
 
         if (localHardware) {
             const gpuText = data.gpu
@@ -19,20 +56,27 @@ async function loadHardwareInfo() {
                 : "None";
             const cpuText = `${data.cpu.name} (${data.cpu.cores}c/${data.cpu.threads}t)`;
             const backendName = String(data.backend || "cpu").toUpperCase();
-            localHardware.innerHTML = `<strong>GPU:</strong> ${escapeHtml(gpuText)} &bull; <strong>CPU:</strong> ${escapeHtml(cpuText)} &bull; <strong>RAM:</strong> ${data.ram_gb} GB &bull; <strong>Backend:</strong> ${escapeHtml(backendName)}`;
+            const recText = recModel ? recModel.name : "HY-MT1.5 1.8B (Q4_K_M)";
+            localHardware.innerHTML = `<strong>GPU:</strong> ${escapeHtml(gpuText)} &bull; <strong>CPU:</strong> ${escapeHtml(cpuText)} &bull; <strong>RAM:</strong> ${data.ram_gb} GB &bull; <strong>Backend:</strong> ${escapeHtml(backendName)} &bull; <strong>Recommended:</strong> ${escapeHtml(recText)}`;
         }
 
-        if (localModelSelect && Array.isArray(data.models)) {
-            const currentVal = localModelSelect.value;
-            localModelSelect.innerHTML = data.models.map(m => {
-                const rec = m.recommended ? " \u2014 Recommended" : "";
-                const gb = (m.size_mb / 1024).toFixed(2);
-                return `<option value="${escapeHtml(m.quant)}">LiquidAI LFM3 1.7B (${escapeHtml(m.quant)}, ${gb} GB)${rec}</option>`;
-            }).join("");
-            if (currentVal) {
-                localModelSelect.value = currentVal;
+        if (localModelSelect && hardwareModels.length > 0) {
+            const previousVal = localModelSelect.value;
+            localModelSelect.innerHTML = renderLocalModelOptions(hardwareModels);
+            const candidate = selectRecommended
+                ? recommendedLocalQuant
+                : (previousVal || (typeof savedLocalModel === "string" ? savedLocalModel : ""));
+            const isValidCandidate = hardwareModels.some(m => m.quant === candidate);
+            if (isValidCandidate) {
+                localModelSelect.value = candidate;
+            } else if (recommendedLocalQuant) {
+                localModelSelect.value = recommendedLocalQuant;
+            }
+            if (localModelSelect.value && !savedLocalModel) {
+                savedLocalModel = localModelSelect.value;
             }
         }
+        pollLocalStatus();
     } catch (err) {
         if (localHardware) {
             localHardware.textContent = "Hardware detection unavailable: " + err.message;
@@ -85,7 +129,7 @@ function updateLocalUi(status) {
         if (localStopBtn) localStopBtn.disabled = false;
     } else if (status.phase === "running") {
         if (localProgress) localProgress.hidden = true;
-        localStatus.textContent = `Running (${status.active_quant || "Local"}) \u2022 Port 51057`;
+        localStatus.textContent = `Running (${formatLocalOptionName(status.active_quant)}) \u2022 Port 51057`;
         if (localStartBtn) {
             localStartBtn.disabled = true;
             localStartBtn.textContent = "Running";
@@ -114,7 +158,7 @@ if (localStartBtn) {
     localStartBtn.addEventListener("click", async () => {
         localStartBtn.disabled = true;
         localStartBtn.textContent = "Requesting...";
-        const quant = localModelSelect ? localModelSelect.value : "Q6_K";
+        const quant = (localModelSelect && localModelSelect.value) || recommendedLocalQuant || "HY-MT1.5-1.8B-Q4_K_M";
         try {
             const res = await fetch("/api/local/start", {
                 method: "POST",
@@ -149,6 +193,16 @@ if (localModelSelect) {
     });
 }
 
-loadHardwareInfo();
+if (localAutoBtn) {
+    localAutoBtn.addEventListener("click", async () => {
+        localAutoBtn.disabled = true;
+        localAutoBtn.textContent = "Detecting...";
+        await loadHardwareInfo(true, true);
+        localAutoBtn.disabled = false;
+        localAutoBtn.textContent = "Auto-detect";
+    });
+}
+
+loadHardwareInfo(false, false);
 pollLocalStatus();
 

@@ -139,6 +139,88 @@ pub fn build_translation_user_prompt(
     )
 }
 
+fn is_chinese_language(code: &str) -> bool {
+    let lower = code.trim().to_ascii_lowercase();
+    lower.starts_with("zh") || lower == "chi" || lower == "zho" || lower == "chs" || lower == "cht" || lower == "chinese"
+}
+
+fn hymt_chinese_language_name(code: &str) -> String {
+    let trimmed = code.trim();
+    if trimmed.is_empty() {
+        return "印尼语".to_string();
+    }
+    let normalized = trimmed.to_ascii_lowercase().replace('_', "-");
+    match normalized.as_str() {
+        "auto" | "id" | "ind" | "indonesian" | "bahasa indonesia" => "印尼语".to_string(),
+        "en" | "eng" | "english" | "en-us" | "en-gb" => "英语".to_string(),
+        "ja" | "jp" | "jpn" | "japanese" => "日语".to_string(),
+        "ko" | "kor" | "korean" => "韩语".to_string(),
+        "zh" | "zh-cn" | "zh-hans" | "chi" | "zho" | "chinese" | "chs" => "中文".to_string(),
+        "zh-tw" | "zh-hk" | "zh-hant" | "cht" => "繁体中文".to_string(),
+        "ms" | "msa" | "zsm" | "malay" | "bahasa melayu" => "马来语".to_string(),
+        "vi" | "vie" | "vietnamese" => "越南语".to_string(),
+        "th" | "tha" | "thai" => "泰语".to_string(),
+        "tl" | "fil" | "filipino" | "tagalog" => "菲律宾语".to_string(),
+        "fr" | "fra" | "fre" | "french" => "法语".to_string(),
+        "de" | "deu" | "ger" | "german" => "德语".to_string(),
+        "es" | "spa" | "spanish" => "西班牙语".to_string(),
+        "pt" | "pt-br" | "pt-pt" | "por" | "portuguese" => "葡萄牙语".to_string(),
+        "ru" | "rus" | "russian" => "俄语".to_string(),
+        "ar" | "ara" | "arabic" => "阿拉伯语".to_string(),
+        "it" | "ita" | "italian" => "意大利语".to_string(),
+        "nl" | "nld" | "dut" | "dutch" => "荷兰语".to_string(),
+        "pl" | "pol" | "polish" => "波兰语".to_string(),
+        "tr" | "tur" | "turkish" => "土耳其语".to_string(),
+        "hi" | "hin" | "hindi" => "印地语".to_string(),
+        _ => resolve_target_language_label(trimmed),
+    }
+}
+
+pub fn build_hymt_user_prompt(
+    text: &str,
+    context: Option<&str>,
+    source_lang: &str,
+    target_lang: &str,
+) -> String {
+    let cleaned_text = normalize_bubble_text(text);
+    if let Some(ctx) = context.map(str::trim).filter(|c| !c.is_empty()) {
+        let zh_target = hymt_chinese_language_name(target_lang);
+        return format!(
+            "{}\n参考上面的信息，把下面的文本翻译成{}，注意不需要翻译上文，也不要额外解释：\n{}",
+            ctx, zh_target, cleaned_text
+        );
+    }
+
+    if is_chinese_language(source_lang) || is_chinese_language(target_lang) {
+        let zh_target = hymt_chinese_language_name(target_lang);
+        return format!(
+            "将以下文本翻译为{}，注意只需要输出翻译后的结果，不要额外解释：\n\n{}",
+            zh_target, cleaned_text
+        );
+    }
+
+    let en_target = resolve_target_language_label(target_lang);
+    format!(
+        "Translate the following segment into {}, without additional explanation.\n\n{}",
+        en_target, cleaned_text
+    )
+}
+
+pub fn strip_hymt_artifacts(raw: &str) -> String {
+    let mut cleaned = raw.trim().to_string();
+    for token in [
+        "<｜hy_end_of_assistant｜>",
+        "<｜hy_end_of_sentence｜>",
+        "<｜hy_Assistant｜>",
+        "<｜hy_begin▁of▁sentence｜>",
+        "<｜hy_User｜>",
+        "</s>",
+    ] {
+        cleaned = cleaned.replace(token, "");
+    }
+    cleaned.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +274,22 @@ mod tests {
         let user_es = build_translation_user_prompt(&[sample_bubble()], "ko", "es");
         assert!(user_es.contains("Source: Korean | Target: Spanish"));
         assert!(!user_es.contains("aku/kamu"));
+    }
+
+    #[test]
+    fn formats_hymt_prompts_and_cleans_tokens() {
+        let non_zh = build_hymt_user_prompt("Hello   world", None, "en", "id");
+        assert!(non_zh.contains("Translate the following segment into Indonesian"));
+        assert!(non_zh.contains("Hello world"));
+
+        let zh_pair = build_hymt_user_prompt("你好世界", None, "zh", "id");
+        assert!(zh_pair.contains("将以下文本翻译为印尼语"));
+
+        let contextual = build_hymt_user_prompt("Follow me!", Some("Wait up!"), "en", "id");
+        assert!(contextual.contains("Wait up!"));
+        assert!(contextual.contains("把下面的文本翻译成印尼语"));
+
+        let stripped = strip_hymt_artifacts("Ikuti aku!<｜hy_end_of_assistant｜>");
+        assert_eq!(stripped, "Ikuti aku!");
     }
 }

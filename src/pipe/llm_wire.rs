@@ -9,6 +9,10 @@ pub(crate) struct OpenAiChatRequest {
     pub(crate) temperature: f32,
     pub(crate) max_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) response_format: Option<ResponseFormat>,
 }
 
