@@ -1,9 +1,18 @@
-FROM rust:1-bookworm AS builder
+FROM ubuntu:24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
+    build-essential \
+    ca-certificates \
+    curl \
     libssl-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:${PATH}"
+
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
 
 WORKDIR /build
 COPY Cargo.* ./
