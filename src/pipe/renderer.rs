@@ -5,8 +5,8 @@ use crate::model::Bubble;
 use ab_glyph::{Font, FontArc, PxScale, PxScaleFont, ScaleFont};
 use image::{Rgb, RgbImage, Rgba, RgbaImage};
 use renderer_bounds::{
-    compute_block_start_y, detect_horizontal_bubble_bounds, detect_vertical_bubble_bounds,
-    measure_block_cap_safe_span,
+    clamp_bounds_against_neighbors, compute_block_start_y, detect_horizontal_bubble_bounds,
+    detect_vertical_bubble_bounds, measure_block_cap_safe_span,
 };
 use std::collections::HashMap;
 
@@ -73,6 +73,19 @@ impl ComicRenderer {
             let base_w = if b.oriented_w > 1.0 { b.oriented_w } else { b.w };
             let base_h = if b.oriented_h > 1.0 { b.oriented_h } else { b.h };
 
+            let mut left_neighbor_limit = 0.0_f32;
+            let mut right_neighbor_limit = img_w;
+            let mut top_neighbor_limit = 0.0_f32;
+            let mut bot_neighbor_limit = img_h;
+            clamp_bounds_against_neighbors(
+                b,
+                bubbles,
+                &mut left_neighbor_limit,
+                &mut right_neighbor_limit,
+                &mut top_neighbor_limit,
+                &mut bot_neighbor_limit,
+            );
+
             let mut safe_w = base_w.max(28.0);
             let mut safe_h = (base_h * 1.15).max(14.0);
             let mut has_bubble_bounds = false;
@@ -82,12 +95,20 @@ impl ComicRenderer {
                     detect_horizontal_bubble_bounds(img, orig_cx, orig_cy, base_w, base_h)
                 {
                     has_bubble_bounds = true;
-                    let left_safe = max_left_border_x + 7.0;
-                    let right_safe = min_right_border_x - 7.0;
+                    let left_safe = (max_left_border_x + 7.0).max(left_neighbor_limit);
+                    let right_safe = (min_right_border_x - 7.0).min(right_neighbor_limit);
+                    let (left_safe, right_safe) = if right_safe >= left_safe + 24.0 {
+                        (left_safe, right_safe)
+                    } else {
+                        (b.x1.max(left_neighbor_limit), b.x2.min(right_neighbor_limit))
+                    };
                     let measured_w = (right_safe - left_safe).max(24.0);
                     let raw_cx = (left_safe + right_safe) * 0.5;
                     let max_shift = b.w * 0.10;
                     center_x = raw_cx.clamp(orig_cx - max_shift, orig_cx + max_shift);
+                    if right_safe >= left_safe + 24.0 {
+                        center_x = center_x.clamp(left_safe + 12.0, right_safe - 12.0);
+                    }
 
                     let clamped_span =
                         (center_x - left_safe).min(right_safe - center_x).max(12.0) * 2.0;
@@ -101,18 +122,25 @@ impl ComicRenderer {
                     if let Some((top_b, bot_b)) =
                         detect_vertical_bubble_bounds(img, center_x, orig_cy, base_h)
                     {
-                        let top_safe = top_b + 6.0;
-                        let bot_safe = bot_b - 6.0;
-                        center_y = ((top_safe + bot_safe) * 0.5)
-                            .clamp(orig_cy - base_h * 0.18, orig_cy + base_h * 0.18);
-                        let max_span_h =
-                            ((center_y - top_safe).min(bot_safe - center_y).max(7.0) * 2.0)
-                                .min(bot_safe - top_safe);
-                        safe_h = safe_h.min(max_span_h).max(14.0);
-                        vert_bounds = Some((top_safe, bot_safe));
+                        let top_safe = (top_b + 6.0).max(top_neighbor_limit);
+                        let bot_safe = (bot_b - 6.0).min(bot_neighbor_limit);
+                        if bot_safe >= top_safe + 14.0 {
+                            center_y = ((top_safe + bot_safe) * 0.5)
+                                .clamp(orig_cy - base_h * 0.18, orig_cy + base_h * 0.18)
+                                .clamp(top_safe + 7.0, bot_safe - 7.0);
+                            let max_span_h =
+                                ((center_y - top_safe).min(bot_safe - center_y).max(7.0) * 2.0)
+                                    .min(bot_safe - top_safe);
+                            safe_h = safe_h.min(max_span_h).max(14.0);
+                            vert_bounds = Some((top_safe, bot_safe));
+                        }
                     }
                 }
             }
+            let neighbor_max_w =
+                ((center_x - left_neighbor_limit).min(right_neighbor_limit - center_x) * 2.0)
+                    .max(24.0);
+            safe_w = safe_w.min(neighbor_max_w).max(24.0);
 
             let words: Vec<&str> = target_text.split_whitespace().collect();
             if words.is_empty() {

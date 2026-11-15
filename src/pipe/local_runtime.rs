@@ -1,6 +1,6 @@
 use crate::model::{
-    find_local_model, EngineBackend, LocalModelFamily, LocalModelSpec, LocalPhase,
-    LocalRuntimeStatus, LocalStatusResponse, LOCAL_MODEL_CATALOG, LOCAL_SERVER_PORT,
+    find_local_model, is_google_translate_model, EngineBackend, LocalModelFamily, LocalModelSpec,
+    LocalPhase, LocalRuntimeStatus, LocalStatusResponse, LOCAL_MODEL_CATALOG, LOCAL_SERVER_PORT,
 };
 use crate::utilities::{download_file, extract_archive, find_file_recursive, get_hardware_info};
 use serde::Deserialize;
@@ -79,6 +79,9 @@ impl LocalRuntime {
     }
 
     pub async fn start(&self, quant: &str) -> Result<(), String> {
+        if is_google_translate_model(quant) {
+            return Err("Google Translate is ready immediately and does not require a local runtime.".to_string());
+        }
         let spec = find_local_model(quant).ok_or_else(|| format!("Unknown model variant: {}", quant))?;
         let mut slot = self.process.lock().await;
         if self.lock_status().phase.is_busy() {

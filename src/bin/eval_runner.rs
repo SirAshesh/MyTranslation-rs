@@ -6,9 +6,7 @@ use server_rs::pipe::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::Mutex;
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 struct PageOcrResult {
@@ -201,8 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Found {} matching images in {}", images.len(), input_dir);
 
-    let ocr_mgr = OcrManager::new(51055)?;
-    let ocr = Arc::new(Mutex::new(ocr_mgr));
+    let ocr = OcrManager::new(51055)?;
 
     let config_path = "config.json";
     let cfg = if Path::new(config_path).exists() {
@@ -232,10 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let img = image::load_from_memory(&fs::read(img_path)?)?.to_rgb8();
                 let (w, h) = (img.width(), img.height());
 
-                let raw_lines = {
-                    let mut guard = ocr.lock().await;
-                    guard.run_ocr(&img)?
-                };
+                let raw_lines = ocr.run_ocr(&img)?;
                 log_raw_lines(&stem, &raw_lines);
 
                 let effective_source_lang =
@@ -274,10 +268,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut img = image::load_from_memory(&fs::read(img_path)?)?.to_rgb8();
                 let (w, h) = (img.width(), img.height());
 
-                let raw_lines = {
-                    let mut guard = ocr.lock().await;
-                    guard.run_ocr(&img)?
-                };
+                let raw_lines = ocr.run_ocr(&img)?;
                 log_raw_lines(&stem, &raw_lines);
 
                 let effective_source_lang =
@@ -306,10 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (w, h) = (img.width(), img.height());
 
                 let t_ocr = Instant::now();
-                let raw_lines = {
-                    let mut guard = ocr.lock().await;
-                    guard.run_ocr(&img)?
-                };
+                let raw_lines = ocr.run_ocr(&img)?;
                 let ocr_ms = t_ocr.elapsed().as_millis();
                 log_raw_lines(&stem, &raw_lines);
 

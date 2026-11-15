@@ -14,12 +14,18 @@ use rapidocr_core::config::{
 };
 use rapidocr_core::model::{ModelCache, ModelDownloadMode, PPOCRV4_EN_MOBILE, PPOCRV6_SMALL};
 use rapidocr_core::RapidOcr;
+use rayon::prelude::*;
 use std::borrow::Cow;
 use std::path::Path;
-use tracing::info;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex, TryLockError,
+};
+use tracing::{info, warn};
 
 pub struct OcrManager {
-    ocr: RapidOcr,
+    engines: Vec<Mutex<RapidOcr>>,
+    next_engine: AtomicUsize,
     max_det_side: u32,
     max_det_pixels: u64,
 }
@@ -107,7 +113,7 @@ impl OcrManager {
         let prefer_cpu = !cfg!(target_os = "windows");
         configure_ocr_profile(&mut cfg, model_dir, prefer_cpu);
 
-        let (ocr, max_det_side, max_det_pixels) = match RapidOcr::new(cfg.clone()) {
+        let (primary_engine, max_det_side, max_det_pixels) = match RapidOcr::new(cfg.clone()) {
             Ok(engine) => {
                 let (max_side, max_pixels) = det_limits_from_config(&cfg);
                 info!(
@@ -121,30 +127,74 @@ impl OcrManager {
                 configure_ocr_profile(&mut cfg, model_dir, true);
                 let threads = cfg.inference.intra_threads;
                 let (max_side, max_pixels) = det_limits_from_config(&cfg);
-                let engine = RapidOcr::new(cfg)
+                let engine = RapidOcr::new(cfg.clone())
                     .map_err(|e| format!("Failed to initialize Native OCR: {}", e))?;
                 info!("Native Rust CPU OCR initialized (intra_threads={}).", threads);
                 (engine, max_side, max_pixels)
             }
         };
 
+        let mut engines = Vec::with_capacity(2);
+        engines.push(Mutex::new(primary_engine));
+        match RapidOcr::new(cfg) {
+            Ok(secondary_engine) => {
+                engines.push(Mutex::new(secondary_engine));
+                info!("OCR engine pool initialized with {} engines.", engines.len());
+            }
+            Err(err) => {
+                warn!(
+                    "Secondary OCR engine unavailable, continuing with single engine: {}",
+                    err
+                );
+            }
+        }
+
         Ok(Self {
-            ocr,
+            engines,
+            next_engine: AtomicUsize::new(0),
             max_det_side,
             max_det_pixels,
         })
     }
 
     fn detect_tile_lines(
-        &mut self,
+        &self,
         tile_img: &RgbImage,
         scale: f32,
         y_offset: u32,
     ) -> Result<Vec<OcrLineItem>, String> {
-        let res = self
-            .ocr
-            .run_image(tile_img)
-            .map_err(|e| format!("Native OCR execution failed: {}", e))?;
+        let len = self.engines.len();
+        if len == 0 {
+            return Err("OCR engine pool is empty".to_string());
+        }
+        let start = self.next_engine.fetch_add(1, Ordering::Relaxed) % len;
+        let mut engine_guard = None;
+        for offset in 0..len {
+            let idx = (start + offset) % len;
+            match self.engines[idx].try_lock() {
+                Ok(guard) => {
+                    engine_guard = Some(guard);
+                    break;
+                }
+                Err(TryLockError::Poisoned(poisoned)) => {
+                    engine_guard = Some(poisoned.into_inner());
+                    break;
+                }
+                Err(TryLockError::WouldBlock) => continue,
+            }
+        }
+
+        let res = {
+            let mut engine = match engine_guard {
+                Some(guard) => guard,
+                None => self.engines[start]
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()),
+            };
+            engine
+                .run_image(tile_img)
+                .map_err(|e| format!("Native OCR execution failed: {}", e))?
+        };
 
         Ok(res
             .lines
@@ -157,7 +207,7 @@ impl OcrManager {
             .collect())
     }
 
-    pub fn run_ocr(&mut self, img: &RgbImage) -> Result<Vec<OcrLineItem>, String> {
+    pub fn run_ocr(&self, img: &RgbImage) -> Result<Vec<OcrLineItem>, String> {
         let (orig_w, orig_h) = (img.width(), img.height());
         if orig_w == 0 || orig_h == 0 {
             return Ok(Vec::new());
@@ -188,39 +238,96 @@ impl OcrManager {
         }
 
         let spans = compute_vertical_tile_spans(orig_h, VERTICAL_TILE_HEIGHT, VERTICAL_TILE_OVERLAP);
-        let mut detections = Vec::new();
+        let tile_batches: Vec<Vec<TileDetection>> = spans
+            .par_iter()
+            .enumerate()
+            .map(|(tile_idx, span)| -> Result<Vec<TileDetection>, String> {
+                let tile_h = span.y_end - span.y_start;
+                let scale =
+                    compute_tile_scale(orig_w, tile_h, self.max_det_side, self.max_det_pixels);
+                let tile_view = image::imageops::crop_imm(img, 0, span.y_start, orig_w, tile_h);
 
-        for (tile_idx, span) in spans.iter().enumerate() {
-            let tile_h = span.y_end - span.y_start;
-            let scale = compute_tile_scale(orig_w, tile_h, self.max_det_side, self.max_det_pixels);
-            let tile_view = image::imageops::crop_imm(img, 0, span.y_start, orig_w, tile_h);
+                let tile_img = if scale > 1.0 {
+                    let target_w = (orig_w as f32 * scale).round() as u32;
+                    let target_h = (tile_h as f32 * scale).round() as u32;
+                    image::imageops::resize(
+                        &*tile_view,
+                        target_w,
+                        target_h,
+                        image::imageops::FilterType::Triangle,
+                    )
+                } else {
+                    tile_view.to_image()
+                };
 
-            let tile_img = if scale > 1.0 {
-                let target_w = (orig_w as f32 * scale).round() as u32;
-                let target_h = (tile_h as f32 * scale).round() as u32;
-                image::imageops::resize(
-                    &*tile_view,
-                    target_w,
-                    target_h,
-                    image::imageops::FilterType::Triangle,
-                )
-            } else {
-                tile_view.to_image()
-            };
+                let tile_lines = self.detect_tile_lines(&tile_img, scale, span.y_start)?;
+                let mut tile_detections = Vec::with_capacity(tile_lines.len());
+                for item in tile_lines {
+                    let bounds = box_bounds(&item.r#box);
+                    let edge_clearance = interior_edge_clearance(&bounds, *span, orig_h);
+                    tile_detections.push(TileDetection {
+                        item,
+                        bounds,
+                        tile_idx,
+                        edge_clearance,
+                    });
+                }
+                Ok(tile_detections)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
-            let tile_lines = self.detect_tile_lines(&tile_img, scale, span.y_start)?;
-            for item in tile_lines {
-                let bounds = box_bounds(&item.r#box);
-                let edge_clearance = interior_edge_clearance(&bounds, *span, orig_h);
-                detections.push(TileDetection {
-                    item,
-                    bounds,
-                    tile_idx,
-                    edge_clearance,
-                });
-            }
+        let detections: Vec<TileDetection> = tile_batches.into_iter().flatten().collect();
+        Ok(deduplicate_seam_detections(detections))
+    }
+
+    pub fn run_ocr_region(
+        &self,
+        img: &RgbImage,
+        x1: u32,
+        y1: u32,
+        x2: u32,
+        y2: u32,
+    ) -> Result<Vec<OcrLineItem>, String> {
+        let clamped_x1 = x1.min(img.width());
+        let clamped_y1 = y1.min(img.height());
+        let clamped_x2 = x2.min(img.width());
+        let clamped_y2 = y2.min(img.height());
+        let crop_w = clamped_x2.saturating_sub(clamped_x1);
+        let crop_h = clamped_y2.saturating_sub(clamped_y1);
+        if crop_w < 8 || crop_h < 8 {
+            return Ok(Vec::new());
         }
 
-        Ok(deduplicate_seam_detections(detections))
+        let crop_view = image::imageops::crop_imm(img, clamped_x1, clamped_y1, crop_w, crop_h);
+        let min_dim = crop_w.min(crop_h) as f32;
+        let max_dim = crop_w.max(crop_h) as f32;
+        let raw_scale = if min_dim < 420.0 {
+            (420.0 / min_dim).clamp(1.6, 2.5)
+        } else {
+            1.0
+        };
+        let scale = raw_scale.min(1280.0 / max_dim).max(1.0);
+
+        let crop_img = if scale > 1.05 {
+            let target_w = ((crop_w as f32 * scale).round() as u32).max(1);
+            let target_h = ((crop_h as f32 * scale).round() as u32).max(1);
+            image::imageops::resize(
+                &*crop_view,
+                target_w,
+                target_h,
+                image::imageops::FilterType::Triangle,
+            )
+        } else {
+            crop_view.to_image()
+        };
+
+        let effective_scale = if scale > 1.05 { scale } else { 1.0 };
+        let mut lines = self.detect_tile_lines(&crop_img, effective_scale, clamped_y1)?;
+        for item in &mut lines {
+            for point in &mut item.r#box {
+                point[0] += clamped_x1 as f32;
+            }
+        }
+        Ok(lines)
     }
 }

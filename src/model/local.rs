@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const LOCAL_SERVER_PORT: u16 = 51057;
 pub const DEFAULT_LOCAL_QUANT: &str = "HY-MT1.5-1.8B-Q4_K_M";
+pub const GOOGLE_TRANSLATE_MODEL_ID: &str = "google-translate";
 
 pub fn local_server_url() -> String {
     format!("http://127.0.0.1:{}/v1", LOCAL_SERVER_PORT)
@@ -136,7 +137,14 @@ pub fn is_hymt_model(model_id: &str) -> bool {
     model_id.trim().to_ascii_lowercase().starts_with("hy-mt")
 }
 
+pub fn is_google_translate_model(model_id: &str) -> bool {
+    model_id.trim().eq_ignore_ascii_case(GOOGLE_TRANSLATE_MODEL_ID)
+}
+
 pub fn format_local_model_label(model_id: &str) -> String {
+    if is_google_translate_model(model_id) {
+        return "Google Translate (Free)".to_string();
+    }
     match find_local_model(model_id) {
         Some(spec) => spec.label(),
         None => format!("Local ({})", model_id.trim()),

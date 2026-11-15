@@ -67,6 +67,10 @@ pub(crate) struct OpenAiChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) top_k: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) repeat_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) response_format: Option<ResponseFormat>,

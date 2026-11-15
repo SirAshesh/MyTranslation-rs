@@ -444,6 +444,19 @@ pub(super) fn diffuse_masked_region(
     iterations: usize,
 ) {
     initialize_mask_bfs(mask, uniform_bg, roi);
+    let active_coords: Vec<(usize, usize, usize)> = (0..roi.h)
+        .flat_map(|dy| {
+            let row_off = dy * roi.w;
+            (0..roi.w).filter_map(move |dx| {
+                let idx = row_off + dx;
+                mask[idx].then_some((dx, dy, idx))
+            })
+        })
+        .collect();
+    if active_coords.is_empty() {
+        return;
+    }
+
     let omega = 1.45_f32;
     let offsets: [(isize, isize, f32); 8] = [
         (-1, 0, 1.0),
@@ -457,52 +470,57 @@ pub(super) fn diffuse_masked_region(
     ];
 
     for _ in 0..iterations {
-        for dy in 0..roi.h {
-            for dx in 0..roi.w {
-                let idx = dy * roi.w + dx;
-                if !mask[idx] {
+        let mut max_delta = 0.0_f32;
+        for &(dx, dy, idx) in &active_coords {
+            let uniform_ref = uniform_bg[idx];
+            let mut sum_w = 0.0_f32;
+            let mut sum_r = 0.0_f32;
+            let mut sum_g = 0.0_f32;
+            let mut sum_b = 0.0_f32;
+
+            for (ox, oy, base_w) in offsets {
+                let nx = dx as isize + ox;
+                let ny = dy as isize + oy;
+                if nx < 0 || nx >= roi.w as isize || ny < 0 || ny >= roi.h as isize {
                     continue;
                 }
-                let uniform_ref = uniform_bg[idx];
-                let mut sum_w = 0.0_f32;
-                let mut sum_r = 0.0_f32;
-                let mut sum_g = 0.0_f32;
-                let mut sum_b = 0.0_f32;
-
-                for (ox, oy, base_w) in offsets {
-                    let nx = dx as isize + ox;
-                    let ny = dy as isize + oy;
-                    if nx < 0 || nx >= roi.w as isize || ny < 0 || ny >= roi.h as isize {
-                        continue;
-                    }
-                    let nidx = ny as usize * roi.w + nx as usize;
-                    let weight = if mask[nidx] {
-                        base_w
-                    } else {
-                        if let Some(bg_rgb) = uniform_ref {
-                            if protected_lineart[nidx]
-                                || rgb_distance(roi.rgb_at(nidx), bg_rgb) > 20.0
-                            {
-                                continue;
-                            }
+                let nidx = ny as usize * roi.w + nx as usize;
+                let weight = if mask[nidx] {
+                    base_w
+                } else {
+                    if let Some(bg_rgb) = uniform_ref {
+                        if protected_lineart[nidx]
+                            || rgb_distance(roi.rgb_at(nidx), bg_rgb) > 20.0
+                        {
+                            continue;
                         }
-                        base_w * 1.4
-                    };
-                    sum_w += weight;
-                    sum_r += roi.r[nidx] * weight;
-                    sum_g += roi.g[nidx] * weight;
-                    sum_b += roi.b[nidx] * weight;
-                }
-
-                if sum_w > 0.0 {
-                    let avg_r = sum_r / sum_w;
-                    let avg_g = sum_g / sum_w;
-                    let avg_b = sum_b / sum_w;
-                    roi.r[idx] = (roi.r[idx] + omega * (avg_r - roi.r[idx])).clamp(0.0, 255.0);
-                    roi.g[idx] = (roi.g[idx] + omega * (avg_g - roi.g[idx])).clamp(0.0, 255.0);
-                    roi.b[idx] = (roi.b[idx] + omega * (avg_b - roi.b[idx])).clamp(0.0, 255.0);
-                }
+                    }
+                    base_w * 1.4
+                };
+                sum_w += weight;
+                sum_r += roi.r[nidx] * weight;
+                sum_g += roi.g[nidx] * weight;
+                sum_b += roi.b[nidx] * weight;
             }
+
+            if sum_w > 0.0 {
+                let avg_r = sum_r / sum_w;
+                let avg_g = sum_g / sum_w;
+                let avg_b = sum_b / sum_w;
+                let new_r = (roi.r[idx] + omega * (avg_r - roi.r[idx])).clamp(0.0, 255.0);
+                let new_g = (roi.g[idx] + omega * (avg_g - roi.g[idx])).clamp(0.0, 255.0);
+                let new_b = (roi.b[idx] + omega * (avg_b - roi.b[idx])).clamp(0.0, 255.0);
+                max_delta = max_delta
+                    .max((new_r - roi.r[idx]).abs())
+                    .max((new_g - roi.g[idx]).abs())
+                    .max((new_b - roi.b[idx]).abs());
+                roi.r[idx] = new_r;
+                roi.g[idx] = new_g;
+                roi.b[idx] = new_b;
+            }
+        }
+        if max_delta < 1e-3 {
+            break;
         }
     }
 }

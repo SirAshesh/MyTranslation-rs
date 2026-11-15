@@ -5,8 +5,8 @@ use super::prompts::{
     normalize_bubble_text, resolve_source_language_label, resolve_target_language_label,
 };
 use crate::model::{
-    format_local_model_label, AppConfig, Bubble, ProviderModelsRequest, SaveSettingsForm,
-    TestKeyRequest,
+    format_local_model_label, is_google_translate_model, AppConfig, Bubble, ProviderModelsRequest,
+    SaveSettingsForm, TestKeyRequest,
 };
 use crate::utilities::{
     is_loopback_url, redact_secrets, resolve_claude_models_url, resolve_openai_models_url,
@@ -157,7 +157,9 @@ impl Translator {
         let cfg = self.get_config().await;
         match cfg.translation_mode.as_str() {
             "claude" => !cfg.claude_api_key.trim().is_empty(),
-            "local" => self.runtime.is_running().await,
+            "local" => {
+                is_google_translate_model(&cfg.local_model) || self.runtime.is_running().await
+            }
             #[cfg(feature = "free-mode")]
             "free" => cfg.free.is_configured(),
             _ => !cfg.deepseek_api_key.trim().is_empty(),
@@ -188,6 +190,9 @@ impl Translator {
 
         match temp_cfg.translation_mode.as_str() {
             "claude" => self.client.test_connection_claude(&temp_cfg).await,
+            "local" if is_google_translate_model(&temp_cfg.local_model) => {
+                crate::pipe::google_translate::test_google_translate_connection().await
+            }
             #[cfg(feature = "free-mode")]
             "free" => {
                 crate::pipe::free_mode::verify_free_connection(
@@ -378,6 +383,14 @@ impl Translator {
                 self.client
                     .translate_claude(&cfg, &uncached, source_lang, target_lang)
                     .await?
+            }
+            "local" if is_google_translate_model(&cfg.local_model) => {
+                crate::pipe::google_translate::translate_with_google(
+                    &uncached,
+                    source_lang,
+                    target_lang,
+                )
+                .await?
             }
             #[cfg(feature = "free-mode")]
             "free" => {

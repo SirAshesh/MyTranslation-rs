@@ -312,6 +312,9 @@ async function loadRuntimeState(announce) {
             if (localModelSelect && Array.from(localModelSelect.options).some(o => o.value === s.local_model)) {
                 localModelSelect.value = s.local_model;
             }
+            if (typeof pollLocalStatus === "function") {
+                pollLocalStatus();
+            }
         }
 
         if (mode === "claude") {
@@ -324,7 +327,7 @@ async function loadRuntimeState(announce) {
                 ? formatLocalOptionName(localId)
                 : localId;
             statModel.textContent = activeModelName;
-            statKey.textContent = "Offline (Local)";
+            statKey.textContent = localId === "google-translate" ? "Free (No API Key)" : "Offline (Local)";
         } else if (mode === "free" && supportsFreeMode) {
             const summary = window.freeModeHandlers.getSummary(s);
             activeModelName = summary.modelName;

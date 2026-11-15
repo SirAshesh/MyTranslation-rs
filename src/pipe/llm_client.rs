@@ -6,7 +6,7 @@ use crate::pipe::llm_wire::{
 };
 use crate::pipe::prompts::{
     build_hymt_user_prompt, build_translation_user_prompt, initial_system_prompt,
-    normalize_bubble_text, strip_hymt_artifacts,
+    normalize_hymt_input_casing, strip_hymt_artifacts,
 };
 use crate::utilities::{redact_secrets, resolve_claude_url, resolve_openai_url, LlmUsageStats};
 use reqwest::Client;
@@ -149,6 +149,8 @@ impl LlmClient {
             temperature: 0.1,
             max_tokens: 5,
             top_p: None,
+            top_k: None,
+            repeat_penalty: None,
             stop: None,
             response_format: None,
         };
@@ -193,6 +195,8 @@ impl LlmClient {
             temperature,
             max_tokens: 8192,
             top_p: None,
+            top_k: None,
+            repeat_penalty: None,
             stop: None,
             response_format: Some(ResponseFormat {
                 r#type: "json_object".to_string(),
@@ -275,7 +279,7 @@ impl LlmClient {
             let context_start = index.saturating_sub(3);
             let context_lines: Vec<String> = bubbles[context_start..index]
                 .iter()
-                .map(|b| normalize_bubble_text(&b.source_text))
+                .map(|b| normalize_hymt_input_casing(&b.source_text))
                 .filter(|text| !text.is_empty())
                 .collect();
             let context = if context_lines.is_empty() {
@@ -297,9 +301,11 @@ impl LlmClient {
                     role: "user".to_string(),
                     content: prompt,
                 }],
-                temperature: 0.7,
+                temperature: 0.35,
                 max_tokens: 512,
                 top_p: Some(0.6),
+                top_k: Some(20),
+                repeat_penalty: Some(1.05),
                 stop: Some(stop_tokens.clone()),
                 response_format: None,
             };
