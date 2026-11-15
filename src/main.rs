@@ -188,12 +188,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/local/start", post(local_start_handler))
         .route("/api/local/stop", post(local_stop_handler))
         .route("/api/test-key", post(test_key_handler))
+        .route("/api/models", post(provider_models_handler))
         .route("/api/translate/text", post(translate_text_handler))
         .route("/stats", get(stats_handler))
         .route("/api/stats/reset", post(reset_stats_handler));
 
     #[cfg(feature = "free-mode")]
-    let protected_routes = protected_routes.route("/api/free/models", post(free_models_handler));
+    let protected_routes = protected_routes
+        .route("/api/free/models", post(free_models_handler))
+        .route(
+            "/api/free/commandcode/session",
+            get(command_code_session_handler),
+        )
+        .route(
+            "/api/free/commandcode/oauth/start",
+            post(command_code_oauth_start_handler),
+        )
+        .route(
+            "/api/free/commandcode/oauth/status",
+            get(command_code_oauth_status_handler),
+        );
 
     let protected_routes = protected_routes.layer(middleware::from_fn_with_state(
         state.clone(),

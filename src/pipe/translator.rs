@@ -1,13 +1,21 @@
 use super::llm_client::{LlmClient, LlmTranslationOutput};
+use super::llm_wire::parse_models_list_json;
 use super::local_runtime::LocalRuntime;
 use super::prompts::{
     normalize_bubble_text, resolve_source_language_label, resolve_target_language_label,
 };
-use crate::model::{format_local_model_label, AppConfig, Bubble, SaveSettingsForm, TestKeyRequest};
-use crate::utilities::LlmUsageStats;
+use crate::model::{
+    format_local_model_label, AppConfig, Bubble, ProviderModelsRequest, SaveSettingsForm,
+    TestKeyRequest,
+};
+use crate::utilities::{
+    is_loopback_url, redact_secrets, resolve_claude_models_url, resolve_openai_models_url,
+    LlmUsageStats,
+};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 const MAX_TRANSLATION_CACHE_ENTRIES: usize = 2048;
@@ -40,6 +48,15 @@ impl TranslationCache {
 
 fn is_non_lexical_bubble(text: &str) -> bool {
     !text.chars().any(|c| c.is_alphanumeric())
+}
+
+fn first_non_empty(primary: &str, fallback: &str) -> String {
+    let trimmed = primary.trim();
+    if trimmed.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn cache_namespace(cfg: &AppConfig, source_lang: &str, target_lang: &str) -> String {
@@ -226,6 +243,86 @@ impl Translator {
             &effective_key,
         )
         .await
+    }
+
+    pub async fn fetch_endpoint_models(
+        &self,
+        req: &ProviderModelsRequest,
+    ) -> Result<Vec<String>, String> {
+        let cfg = self.get_config().await;
+        let mode = req.mode.trim().to_ascii_lowercase();
+        let (label, url, effective_key, is_claude) = match mode.as_str() {
+            "claude" => {
+                let key = first_non_empty(&req.api_key, &cfg.claude_api_key);
+                if key.is_empty() {
+                    return Err("Enter a Claude API key before fetching models.".to_string());
+                }
+                let base = first_non_empty(&req.base_url, &cfg.claude_base_url);
+                ("Claude", resolve_claude_models_url(&base), key, true)
+            }
+            "openai" => {
+                let key = first_non_empty(&req.api_key, &cfg.deepseek_api_key);
+                let base = first_non_empty(&req.base_url, &cfg.openai_base_url);
+                let resolved_url = resolve_openai_models_url(&base);
+                if key.is_empty() && !is_loopback_url(&resolved_url) {
+                    return Err(
+                        "Enter an OpenAI-compatible API key before fetching models.".to_string(),
+                    );
+                }
+                ("OpenAI-compatible", resolved_url, key, false)
+            }
+            other => {
+                return Err(format!("Unsupported model lookup mode '{}'.", other));
+            }
+        };
+
+        let mut builder = self
+            .client
+            .http_client()
+            .get(&url)
+            .timeout(Duration::from_secs(15));
+        if is_claude {
+            builder = builder
+                .header("x-api-key", &effective_key)
+                .header("anthropic-version", "2023-06-01");
+            if url.contains("api.anthropic.com") && !url.contains('?') {
+                builder = builder.query(&[("limit", "100")]);
+            }
+        } else if !effective_key.is_empty() {
+            builder = builder.bearer_auth(&effective_key);
+        }
+
+        let secrets: Vec<&str> = if effective_key.is_empty() {
+            Vec::new()
+        } else {
+            vec![effective_key.as_str()]
+        };
+
+        let resp = builder.send().await.map_err(|e| {
+            redact_secrets(
+                &format!("Failed to reach {} models endpoint: {}", label, e),
+                &secrets,
+            )
+        })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(redact_secrets(
+                &format!("{} models endpoint returned HTTP {}: {}", label, status, body),
+                &secrets,
+            ));
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read {} models response: {}", label, e))?;
+        let models = parse_models_list_json(&body, label)?;
+        if models.is_empty() {
+            return Err(format!("{} endpoint returned an empty model list.", label));
+        }
+        Ok(models)
     }
 
     pub async fn translate_bubbles(

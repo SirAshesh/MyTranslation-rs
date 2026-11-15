@@ -1,6 +1,62 @@
 use crate::utilities::LlmUsageStats;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Deserialize)]
+pub(crate) struct OpenAiModelsListResponse {
+    #[serde(default)]
+    pub(crate) data: Vec<OpenAiModelEntry>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct OpenAiModelEntry {
+    pub(crate) id: String,
+}
+
+#[derive(Deserialize)]
+struct WrappedModelsListResponse {
+    #[serde(default)]
+    models: Vec<OpenAiModelEntry>,
+}
+
+fn collect_unique_model_ids(entries: impl Iterator<Item = String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut ordered = Vec::new();
+    for raw in entries {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+            ordered.push(trimmed.to_string());
+        }
+    }
+    ordered
+}
+
+pub(crate) fn parse_models_list_json(raw: &str, label: &str) -> Result<Vec<String>, String> {
+    if let Ok(list) = serde_json::from_str::<OpenAiModelsListResponse>(raw) {
+        if !list.data.is_empty() {
+            return Ok(collect_unique_model_ids(
+                list.data.into_iter().map(|entry| entry.id),
+            ));
+        }
+        if raw.contains("\"data\"") {
+            return Ok(Vec::new());
+        }
+    }
+
+    if let Ok(entries) = serde_json::from_str::<Vec<OpenAiModelEntry>>(raw) {
+        return Ok(collect_unique_model_ids(
+            entries.into_iter().map(|entry| entry.id),
+        ));
+    }
+
+    if let Ok(wrapped) = serde_json::from_str::<WrappedModelsListResponse>(raw) {
+        return Ok(collect_unique_model_ids(
+            wrapped.models.into_iter().map(|entry| entry.id),
+        ));
+    }
+
+    Err(format!("Failed to parse {} models JSON response.", label))
+}
 
 #[derive(Serialize)]
 pub(crate) struct OpenAiChatRequest {
@@ -249,6 +305,25 @@ mod tests {
         assert_eq!(claude_stats.prompt_tokens, 360);
         assert_eq!(claude_stats.prompt_cached_tokens, 310);
         assert_eq!(claude_stats.completion_tokens, 20);
+    }
+
+    #[test]
+    fn parses_openai_and_claude_models_payloads() {
+        let standard = r#"{"data":[{"id":"claude-sonnet-4-20250514"},{"id":"claude-3-5-sonnet-latest"},{"id":"claude-sonnet-4-20250514"}]}"#;
+        let ids = parse_models_list_json(standard, "Claude").expect("parse standard");
+        assert_eq!(
+            ids,
+            vec!["claude-sonnet-4-20250514", "claude-3-5-sonnet-latest"]
+        );
+
+        let array_payload = r#"[{"id":"deepseek-chat"},{"id":"deepseek-reasoner"}]"#;
+        let array_ids = parse_models_list_json(array_payload, "OpenAI").expect("parse array");
+        assert_eq!(array_ids, vec!["deepseek-chat", "deepseek-reasoner"]);
+
+        let empty_data = r#"{"data":[]}"#;
+        assert!(parse_models_list_json(empty_data, "OpenAI")
+            .expect("parse empty")
+            .is_empty());
     }
 }
 

@@ -172,6 +172,24 @@ pub async fn test_key_handler(
     }
 }
 
+pub async fn provider_models_handler(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ProviderModelsRequest>,
+) -> Json<ProviderModelsResponse> {
+    match state.pipeline.translator.fetch_endpoint_models(&req).await {
+        Ok(models) => Json(ProviderModelsResponse {
+            success: true,
+            message: format!("Loaded {} model(s).", models.len()),
+            models,
+        }),
+        Err(message) => Json(ProviderModelsResponse {
+            success: false,
+            message,
+            models: Vec::new(),
+        }),
+    }
+}
+
 #[cfg(feature = "free-mode")]
 pub async fn free_models_handler(
     State(state): State<Arc<AppState>>,
@@ -203,6 +221,33 @@ pub async fn free_models_handler(
             message,
         }),
     }
+}
+
+#[cfg(feature = "free-mode")]
+pub async fn command_code_session_handler() -> Json<crate::pipe::free_mode::CommandCodeSessionStatus> {
+    Json(crate::pipe::free_mode::inspect_cli_oauth_session())
+}
+
+#[cfg(feature = "free-mode")]
+pub async fn command_code_oauth_start_handler() -> Response {
+    match crate::pipe::free_mode::start_command_code_oauth().await {
+        Ok(res) => (StatusCode::OK, Json(res)).into_response(),
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "success": false,
+                "message": err
+            })),
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(feature = "free-mode")]
+pub async fn command_code_oauth_status_handler(
+    Query(query): Query<crate::pipe::free_mode::CommandCodeOAuthStatusQuery>,
+) -> Json<crate::pipe::free_mode::CommandCodeOAuthStatusResponse> {
+    Json(crate::pipe::free_mode::get_command_code_oauth_status(&query.state))
 }
 
 pub async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<StatsSnapshot> {

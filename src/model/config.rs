@@ -207,6 +207,23 @@ pub struct TestKeyResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ProviderModelsRequest {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProviderModelsResponse {
+    pub success: bool,
+    pub message: String,
+    pub models: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TextTranslateRequest {
     #[serde(default)]
     pub text: String,

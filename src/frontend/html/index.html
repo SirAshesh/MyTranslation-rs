@@ -400,8 +400,14 @@
                                 </div>
                                 <div class="field">
                                     <label for="openai-model">Model ID</label>
-                                    <input type="text" id="openai-model" placeholder="deepseek-chat"
-                                        spellcheck="false" />
+                                    <div class="input-group">
+                                        <input type="text" id="openai-model" placeholder="deepseek-chat"
+                                            spellcheck="false" />
+                                        <button type="button" class="btn-secondary" id="openai-get-models-btn">Get
+                                            Models</button>
+                                    </div>
+                                    <select id="openai-model-select" hidden
+                                        aria-label="Available OpenAI-compatible models"></select>
                                 </div>
                                 <div class="field">
                                     <label for="openai-key">API key</label>
@@ -426,8 +432,14 @@
                                 </div>
                                 <div class="field">
                                     <label for="claude-model">Model ID</label>
-                                    <input type="text" id="claude-model" placeholder="claude-3-5-sonnet-latest"
-                                        spellcheck="false" />
+                                    <div class="input-group">
+                                        <input type="text" id="claude-model" placeholder="claude-3-5-sonnet-latest"
+                                            spellcheck="false" />
+                                        <button type="button" class="btn-secondary" id="claude-get-models-btn">Get
+                                            Models</button>
+                                    </div>
+                                    <select id="claude-model-select" hidden
+                                        aria-label="Available Claude models"></select>
                                 </div>
                                 <div class="field">
                                     <label for="claude-key">Claude API key</label>
