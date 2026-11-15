@@ -1,18 +1,6 @@
 name: Docker
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'src/**'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'Cargo.toml'
-      - 'fonts/**'
-      - '.github/workflows/docker.yml'
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       tag:

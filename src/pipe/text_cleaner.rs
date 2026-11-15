@@ -1,5 +1,46 @@
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::OnceLock;
+
+fn cached_regex<'a>(slot: &'a OnceLock<Option<Regex>>, pattern: &str) -> Option<&'a Regex> {
+    slot.get_or_init(|| Regex::new(pattern).ok()).as_ref()
+}
+
+fn compile_replacement_table(
+    entries: &[(&'static str, &'static str)],
+) -> Vec<(Regex, &'static str)> {
+    entries
+        .iter()
+        .filter_map(|&(pat, rep)| Regex::new(pat).ok().map(|re| (re, rep)))
+        .collect()
+}
+
+fn is_digits_and_ascii_letters(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    let starts_digit = bytes[0].is_ascii_digit();
+    if !starts_digit && !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let mut switched = false;
+    for &b in &bytes[1..] {
+        let is_digit = b.is_ascii_digit();
+        let is_alpha = b.is_ascii_alphabetic();
+        if !is_digit && !is_alpha {
+            return false;
+        }
+        if !switched {
+            if is_digit != starts_digit {
+                switched = true;
+            }
+        } else if is_digit == starts_digit {
+            return false;
+        }
+    }
+    switched
+}
 
 pub fn is_cjk_char(c: char) -> bool {
     matches!(c,
@@ -94,21 +135,31 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
     if stripped.is_empty() {
         return true;
     }
+    let stripped_lower = stripped.to_lowercase();
+    if stripped_lower.contains("mangayyorg") || stripped_lower.contains("erisscans") {
+        return true;
+    }
 
     let all_num = clean.chars().all(|c| c.is_numeric()) || stripped.chars().all(|c| c.is_numeric());
     if all_num {
-        if score < 0.85 || stripped.len() > 4 || stripped.is_empty() || stripped == "000" || stripped == "00" {
-            return true;
-        }
-        if stripped.len() == 1 && (w < 20.0 || h < 16.0 || !clean.contains("...")) {
+        let has_num_dialogue_punct =
+            clean.contains("...") || clean.contains('?') || clean.contains('!');
+        if !has_num_dialogue_punct
+            || score < 0.85
+            || stripped.len() > 4
+            || stripped.is_empty()
+            || stripped == "000"
+            || stripped == "00"
+            || (w > 85.0 && h > 85.0)
+            || (stripped.len() == 1 && (w < 20.0 || h < 16.0 || !clean.contains("...")))
+        {
             return true;
         }
         return false;
     }
 
     let is_single_token = !clean.chars().any(char::is_whitespace);
-    let mixed_re = Regex::new(r"^\d+[A-Za-z]+$|^[A-Za-z]+\d+$").unwrap();
-    if is_single_token && stripped.len() <= 5 && score < 0.85 && mixed_re.is_match(&stripped) {
+    if is_single_token && stripped.len() <= 5 && score < 0.85 && is_digits_and_ascii_letters(&stripped) {
         return true;
     }
 
@@ -127,6 +178,36 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
 
     if contains_cjk_or_hangul(clean) {
         return score < 0.40;
+    }
+
+    if is_single_token
+        && matches!(
+            stripped_lower.as_str(),
+            "kyt"
+                | "erxi"
+                | "yotot"
+                | "yorot"
+                | "otor"
+                | "yor"
+                | "ktoo"
+                | "yloh"
+                | "myok"
+                | "tritm"
+                | "rim"
+                | "wok"
+        )
+    {
+        return true;
+    }
+
+    if is_single_token && h > 85.0 && w > 85.0 {
+        let is_known_exclamation = matches!(
+            stripped_lower.as_str(),
+            "huh" | "what" | "no" | "wait" | "stop" | "hey" | "ah" | "aah" | "oh"
+        );
+        if !is_known_exclamation {
+            return true;
+        }
     }
 
     let valid_short: HashSet<&'static str> = [
@@ -151,20 +232,44 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         }
     }
 
-    if char_count <= 6 && score < 0.60 {
+    let has_dialogue_punct =
+        clean.contains("...") || clean.contains("..") || clean.contains('?') || clean.contains('!');
+    let vocal_interjections: HashSet<&'static str> = [
+        "NGH", "NNGH", "MMM", "HMM", "UHH", "AHH", "OHH", "EHH",
+        "HUH", "UGH", "GAAH", "ARGH", "HMPH", "PHEW",
+    ]
+    .into_iter()
+    .collect();
+
+    let words: Vec<String> = clean
+        .split_whitespace()
+        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    if words.is_empty() {
         return true;
     }
 
-    if char_count <= 4 && score < 0.76 && (w < 55.0 || h < 18.0) {
+    let is_vocal_dialogue = (score >= 0.80 || (has_dialogue_punct && score >= 0.55))
+        && words.iter().all(|w| vocal_interjections.contains(w.as_str()));
+
+    if char_count <= 6 && score < 0.60 && !is_vocal_dialogue {
         return true;
     }
 
-    if h < 15.0 && score < 0.80 {
+    if char_count <= 4 && score < 0.76 && (w < 55.0 || h < 18.0) && !is_vocal_dialogue {
         return true;
     }
 
-    let paren_re = Regex::new(r"[\(\[\{]([A-Za-z\s\-]{2,16})[\)\]\}]").unwrap();
-    if let Some(caps) = paren_re.captures(clean) {
+    if h < 15.0 && score < 0.80 && !is_vocal_dialogue {
+        return true;
+    }
+
+    static PAREN_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    if let Some(caps) =
+        cached_regex(&PAREN_RE, r"[\(\[\{]([A-Za-z\s\-]{2,16})[\)\]\}]").and_then(|re| re.captures(clean))
+    {
         let inner = caps[1].to_uppercase();
         let sfx_terms = [
             "WHOOSH", "GAPE", "FWIP", "THUD", "TWITCH", "CLENCH", "SIGH",
@@ -175,14 +280,8 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         }
     }
 
-    let words: Vec<String> = clean
-        .split_whitespace()
-        .map(|w| w.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_uppercase())
-        .filter(|w| !w.is_empty())
-        .collect();
-
-    if words.is_empty() {
-        return true;
+    if is_vocal_dialogue {
+        return false;
     }
 
     let known_sfx: HashSet<&'static str> = [
@@ -202,13 +301,26 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         "FWIP", "WHOOSH", "CLENCH", "TWITCH", "GAPE", "THUD", "GULP",
         "POKAAAN", "POKAN", "DOKI", "HMPH", "PFFT", "CHIRA", "NIKORI", "SCURRY", "CHATTER"
     ];
-    if words.len() <= 2 && words.iter().any(|w| sfx_substrings.iter().any(|&sub| w.contains(sub))) {
+    let allow_vocal_token = |w: &String| -> bool {
+        (score >= 0.80 || has_dialogue_punct) && vocal_interjections.contains(w.as_str())
+    };
+    if words.len() <= 2
+        && words
+            .iter()
+            .any(|w| !allow_vocal_token(w) && sfx_substrings.iter().any(|&sub| w.contains(sub)))
+    {
         return true;
     }
 
     let non_sfx_words: Vec<&String> = words
         .iter()
-        .filter(|w| !known_sfx.contains(w.as_str()) && w.as_str() != "A" && w.as_str() != "AN" && w.as_str() != "THE")
+        .filter(|w| {
+            allow_vocal_token(w)
+                || (!known_sfx.contains(w.as_str())
+                    && w.as_str() != "A"
+                    && w.as_str() != "AN"
+                    && w.as_str() != "THE")
+        })
         .collect();
 
     if non_sfx_words.is_empty() || non_sfx_words.iter().all(|w| w.chars().count() <= 1) {
@@ -219,7 +331,7 @@ pub fn is_junk_or_sfx(text: &str, score: f32, w: f32, h: f32) -> bool {
         return true;
     }
 
-    if words.len() <= 2 && words.iter().all(|w| has_repeated_letters(w)) {
+    if words.len() <= 2 && words.iter().all(|w| has_repeated_letters(w) && !allow_vocal_token(w)) {
         return true;
     }
 
@@ -236,73 +348,64 @@ pub fn normalize_source_text(text: &str) -> String {
         return s;
     }
 
+    static SPACE_RE: OnceLock<Option<Regex>> = OnceLock::new();
     if contains_cjk(&s) || contains_cjk_or_hangul(&s) {
         s = s.replace('\u{3000}', " ");
-        let space_re = Regex::new(r"\s+").unwrap();
-        return space_re.replace_all(&s, " ").trim().to_string();
+        return match cached_regex(&SPACE_RE, r"\s+") {
+            Some(re) => re.replace_all(&s, " ").trim().to_string(),
+            None => s.trim().to_string(),
+        };
     }
 
-    let honorific_dash_re = Regex::new(r"(?i)\b([A-Za-z]+)\s*[-~—]?\s*(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
-    s = honorific_dash_re.replace_all(&s, "$1-$2").to_string();
-
-    let hyphen_re = Regex::new(r"\b([A-Za-z]+)-\s+([A-Za-z]+)\b").unwrap();
-    s = hyphen_re.replace_all(&s, "$1$2").to_string();
-
-    let trailing_hyphen_re = Regex::new(r"\b([A-Za-z]+)-(?:\s+|$)").unwrap();
-    s = trailing_hyphen_re.replace_all(&s, "$1 ").to_string();
-
-    let one_re = Regex::new(r"\b1\b").unwrap();
-    s = one_re.replace_all(&s, "I").to_string();
-    let one_contract_re = Regex::new(r"\b1('m|'ll|'d|'ve)\b").unwrap();
-    s = one_contract_re.replace_all(&s, "I$1").to_string();
-
-    let cant_re = Regex::new(r"(?i)\bcan'ti\b").unwrap();
-    s = cant_re.replace_all(&s, "Can't I").to_string();
-    let w1fe_re = Regex::new(r"(?i)\bw1fe\b").unwrap();
-    s = w1fe_re.replace_all(&s, "wife").to_string();
-    let w1th_re = Regex::new(r"(?i)\bw1th\b").unwrap();
-    s = w1th_re.replace_all(&s, "with").to_string();
-    let hu5_re = Regex::new(r"(?i)\bhu5band\b").unwrap();
-    s = hu5_re.replace_all(&s, "husband").to_string();
-    let feep_re = Regex::new(r"(?i)\bfeep\b").unwrap();
-    s = feep_re.replace_all(&s, "keep").to_string();
-
-    let dot_word_re = Regex::new(r"\b([a-zA-Z]{2,})\.([a-zA-Z]{2,})\b").unwrap();
-    s = dot_word_re.replace_all(&s, "$1$2").to_string();
-
-    let dot_space_re = Regex::new(r"\b([a-zA-Z]+)\.([A-Z][a-zA-Z]+)\b").unwrap();
-    s = dot_space_re.replace_all(&s, "$1. $2").to_string();
-
-    let slash_re = Regex::new(r"/\s*([a-zA-Z]+)").unwrap();
-    s = slash_re.replace_all(&s, " $1").to_string();
-    let plus_re = Regex::new(r"\+([a-zA-Z]+)").unwrap();
-    s = plus_re.replace_all(&s, "$1").to_string();
-
-    let space_re = Regex::new(r"\s+").unwrap();
-    s = space_re.replace_all(&s, " ").trim().to_string();
+    static NORMALIZE_TABLE: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    let table = NORMALIZE_TABLE.get_or_init(|| {
+        compile_replacement_table(&[
+            (r"(?i)\b([A-Za-z]+)\s*[-~—]?\s*(san|sama|kun|chan|senpai|sensei|dono)\b", "$1-$2"),
+            (r"\b([A-Za-z]+)-\s+([A-Za-z]+)\b", "$1$2"),
+            (r"\b([A-Za-z]+)-(?:\s+|$)", "$1 "),
+            (r"\b1\b", "I"),
+            (r"\b1('m|'ll|'d|'ve)\b", "I$1"),
+            (r"(?i)\bcan'ti\b", "Can't I"),
+            (r"(?i)\bw1fe\b", "wife"),
+            (r"(?i)\bw1th\b", "with"),
+            (r"(?i)\bhu5band\b", "husband"),
+            (r"(?i)\bfeep\b", "keep"),
+            (r"\b([a-zA-Z]{2,})\.([a-zA-Z]{2,})\b", "$1$2"),
+            (r"\b([a-zA-Z]+)\.([A-Z][a-zA-Z]+)\b", "$1. $2"),
+            (r"/\s*([a-zA-Z]+)", " $1"),
+            (r"\+([a-zA-Z]+)", "$1"),
+            (r"\s+", " "),
+        ])
+    });
+    for (re, rep) in table {
+        s = re.replace_all(&s, *rep).into_owned();
+    }
+    s = s.trim().to_string();
 
     let alpha_count = s.chars().filter(|c| c.is_alphabetic()).count();
     let upper_count = s.chars().filter(|c| c.is_uppercase()).count();
 
     if alpha_count > 0 && (upper_count as f32 / alpha_count as f32) > 0.60 {
-        let sent_re = Regex::new(r"([.?!]+\s*)").unwrap();
-        let mut result = String::new();
-        let mut last_idx = 0;
+        static SENT_RE: OnceLock<Option<Regex>> = OnceLock::new();
+        if let Some(sent_re) = cached_regex(&SENT_RE, r"([.?!]+\s*)") {
+            let mut result = String::new();
+            let mut last_idx = 0;
 
-        for mat in sent_re.find_iter(&s) {
-            let chunk = &s[last_idx..mat.start()];
-            let punct = mat.as_str();
-            result.push_str(&format_sentence(chunk));
-            result.push_str(punct);
-            last_idx = mat.end();
+            for mat in sent_re.find_iter(&s) {
+                let chunk = &s[last_idx..mat.start()];
+                let punct = mat.as_str();
+                result.push_str(&format_sentence(chunk));
+                result.push_str(punct);
+                last_idx = mat.end();
+            }
+
+            if last_idx < s.len() {
+                let tail = &s[last_idx..];
+                result.push_str(&format_sentence(tail));
+            }
+
+            s = result;
         }
-
-        if last_idx < s.len() {
-            let tail = &s[last_idx..];
-            result.push_str(&format_sentence(tail));
-        }
-
-        s = result;
     }
 
     s
@@ -321,30 +424,38 @@ fn format_sentence(chunk: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
     };
 
-    let i_re = Regex::new(r"\bi\b").unwrap();
-    formatted = i_re.replace_all(&formatted, "I").to_string();
-    let im_re = Regex::new(r"\bi'm\b").unwrap();
-    formatted = im_re.replace_all(&formatted, "I'm").to_string();
-    let ill_re = Regex::new(r"\bi'll\b").unwrap();
-    formatted = ill_re.replace_all(&formatted, "I'll").to_string();
-    let id_re = Regex::new(r"\bi'd\b").unwrap();
-    formatted = id_re.replace_all(&formatted, "I'd").to_string();
-    let ive_re = Regex::new(r"\bi've\b").unwrap();
-    formatted = ive_re.replace_all(&formatted, "I've").to_string();
+    static SENTENCE_TABLE: OnceLock<Vec<(Regex, &'static str)>> = OnceLock::new();
+    let fixes = SENTENCE_TABLE.get_or_init(|| {
+        compile_replacement_table(&[
+            (r"\bi\b", "I"),
+            (r"\bi'm\b", "I'm"),
+            (r"\bi'll\b", "I'll"),
+            (r"\bi'd\b", "I'd"),
+            (r"\bi've\b", "I've"),
+        ])
+    });
+    for (re, rep) in fixes {
+        formatted = re.replace_all(&formatted, *rep).into_owned();
+    }
 
-    let hon_cap_re = Regex::new(r"\b([a-z]+)-(san|sama|kun|chan|senpai|sensei|dono)\b").unwrap();
-    formatted = hon_cap_re
-        .replace_all(&formatted, |caps: &regex::Captures| {
-            let name = &caps[1];
-            let suffix = &caps[2];
-            let mut name_chars = name.chars();
-            let cap_name = match name_chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + name_chars.as_str(),
-            };
-            format!("{}-{}", cap_name, suffix)
-        })
-        .to_string();
+    static HON_CAP_RE: OnceLock<Option<Regex>> = OnceLock::new();
+    if let Some(hon_cap_re) = cached_regex(
+        &HON_CAP_RE,
+        r"\b([a-z]+)-(san|sama|kun|chan|senpai|sensei|dono)\b",
+    ) {
+        formatted = hon_cap_re
+            .replace_all(&formatted, |caps: &regex::Captures| {
+                let name = &caps[1];
+                let suffix = &caps[2];
+                let mut name_chars = name.chars();
+                let cap_name = match name_chars.next() {
+                    None => String::new(),
+                    Some(first) => first.to_uppercase().collect::<String>() + name_chars.as_str(),
+                };
+                format!("{}-{}", cap_name, suffix)
+            })
+            .to_string();
+    }
 
     formatted
 }
@@ -408,5 +519,57 @@ mod tests {
         assert!(is_junk_or_sfx("GeG", 0.71, 52.0, 29.5));
         assert!(is_junk_or_sfx("cors", 0.75, 21.8, 17.6));
         assert!(!is_junk_or_sfx("GO", 0.96, 52.0, 26.0));
+    }
+
+    #[test]
+    fn test_vocal_dialogue_interjections_preserved() {
+        assert!(!is_junk_or_sfx("NGH...", 1.0, 84.0, 31.0));
+        assert!(!is_junk_or_sfx("MMM....", 1.0, 108.0, 32.0));
+        assert!(!is_junk_or_sfx("HMM?", 0.85, 68.0, 28.0));
+        assert!(!is_junk_or_sfx("HMPH!", 0.90, 74.0, 28.0));
+        assert!(!is_junk_or_sfx("PHEW...", 0.72, 70.0, 26.0));
+        assert!(!is_junk_or_sfx("UGH!", 0.88, 60.0, 26.0));
+        assert!(!is_junk_or_sfx("ARGH!", 0.92, 80.0, 28.0));
+        assert!(is_junk_or_sfx("NGH", 0.45, 40.0, 20.0));
+        assert!(is_junk_or_sfx("FWIP!", 0.95, 70.0, 30.0));
+    }
+
+    #[test]
+    fn test_watermarks_and_korean_sfx_gibberish_dropped() {
+        assert!(is_junk_or_sfx("Mangayyorg", 0.99, 200.0, 40.0));
+        assert!(is_junk_or_sfx("mangayy.org", 0.99, 200.0, 40.0));
+        assert!(is_junk_or_sfx("Erisscanscom", 0.99, 110.0, 24.0));
+        assert!(is_junk_or_sfx("ErisScans.com", 0.99, 110.0, 24.0));
+        assert!(is_junk_or_sfx("erisscans", 0.99, 110.0, 24.0));
+
+        for token in [
+            "kyt", "Erxi", "Yotot..", "Yorot.", "otor..", "Yor..", "Ktoo", "Yloh", "Myok",
+            "Tritm", "Rim", "Wok",
+        ] {
+            assert!(
+                is_junk_or_sfx(token, 0.98, 90.0, 70.0),
+                "Expected gibberish SFX {} to be dropped",
+                token
+            );
+        }
+
+        assert!(!is_junk_or_sfx("Hik!", 0.98, 118.0, 56.0));
+        assert!(!is_junk_or_sfx("Hic, ngh....", 0.98, 164.0, 34.0));
+    }
+
+    #[test]
+    fn test_large_artwork_single_token_boxes_filtered_except_exclamations() {
+        assert!(is_junk_or_sfx("CRASH!", 0.99, 140.0, 110.0));
+        assert!(is_junk_or_sfx("BAM", 0.99, 120.0, 120.0));
+        assert!(is_junk_or_sfx("05", 0.97, 234.0, 243.0));
+        assert!(is_junk_or_sfx("19", 1.0, 25.0, 24.0));
+        assert!(!is_junk_or_sfx("19?", 0.96, 40.0, 24.0));
+        assert!(!is_junk_or_sfx("100!", 0.96, 55.0, 26.0));
+        assert!(!is_junk_or_sfx("3...", 0.95, 40.0, 24.0));
+        assert!(!is_junk_or_sfx("Huh?", 0.99, 236.0, 154.0));
+        assert!(!is_junk_or_sfx("Aah...!", 0.99, 305.0, 102.0));
+        assert!(!is_junk_or_sfx("Oh", 0.99, 140.0, 246.0));
+        assert!(!is_junk_or_sfx("WAIT!!", 0.99, 160.0, 100.0));
+        assert!(!is_junk_or_sfx("No!", 0.99, 100.0, 100.0));
     }
 }

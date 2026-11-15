@@ -187,9 +187,31 @@ struct TranslationWrapper {
     translations: Vec<TranslationItem>,
 }
 
+fn deserialize_flexible_id<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum FlexId {
+        Int(usize),
+        Str(String),
+    }
+
+    match FlexId::deserialize(deserializer)? {
+        FlexId::Int(id) => Ok(id),
+        FlexId::Str(raw) => raw
+            .trim()
+            .parse::<usize>()
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 #[derive(Deserialize)]
 struct TranslationItem {
+    #[serde(deserialize_with = "deserialize_flexible_id")]
     id: usize,
+    #[serde(alias = "translation", alias = "translated", alias = "text")]
     target: String,
 }
 
@@ -200,38 +222,148 @@ fn strip_reasoning_block(raw_content: &str) -> &str {
     }
 }
 
-pub(crate) fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
-    let mut translation_map = HashMap::new();
-    let trimmed = strip_reasoning_block(raw_content)
-        .trim()
-        .trim_start_matches("```json")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim();
+fn extract_fenced_block(text: &str) -> Option<&str> {
+    let fence_start = text.find("```")?;
+    let after_fence = &text[fence_start + 3..];
+    let body = match after_fence.find('\n') {
+        Some(nl) => &after_fence[nl + 1..],
+        None => after_fence,
+    };
+    let sliced = match body.rfind("```") {
+        Some(fence_end) => &body[..fence_end],
+        None => body,
+    };
+    Some(sliced.trim())
+}
+
+fn extract_outer_json_slice(text: &str) -> Option<&str> {
+    let first_obj = text.find('{');
+    let first_arr = text.find('[');
+    let (start, close) = match (first_obj, first_arr) {
+        (Some(o), Some(a)) if a < o => (a, ']'),
+        (Some(o), _) => (o, '}'),
+        (None, Some(a)) => (a, ']'),
+        (None, None) => return None,
+    };
+    let end = text.rfind(close)?;
+    if end > start {
+        Some(&text[start..=end])
+    } else {
+        None
+    }
+}
+
+fn insert_non_empty(map: &mut HashMap<usize, String>, id: usize, target: String) {
+    if !target.trim().is_empty() {
+        map.insert(id, target);
+    }
+}
+
+fn try_parse_json_candidate(candidate: &str) -> Option<HashMap<usize, String>> {
+    let trimmed = candidate.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
 
     if let Ok(wrapper) = serde_json::from_str::<TranslationWrapper>(trimmed) {
+        let mut map = HashMap::new();
         for item in wrapper.translations {
-            translation_map.insert(item.id, item.target);
+            insert_non_empty(&mut map, item.id, item.target);
         }
-        return translation_map;
+        return Some(map);
     }
 
     if let Ok(items) = serde_json::from_str::<Vec<TranslationItem>>(trimmed) {
+        let mut map = HashMap::new();
         for item in items {
-            translation_map.insert(item.id, item.target);
+            insert_non_empty(&mut map, item.id, item.target);
         }
-        return translation_map;
+        return Some(map);
     }
 
     if let Ok(obj) = serde_json::from_str::<HashMap<String, serde_json::Value>>(trimmed) {
-        for (k, v) in obj {
-            if let (Ok(id), Some(s)) = (k.parse::<usize>(), v.as_str()) {
-                translation_map.insert(id, s.to_string());
+        let mut map = HashMap::new();
+        for (key, value) in obj {
+            let Ok(id) = key.trim().parse::<usize>() else {
+                continue;
+            };
+            let extracted = value.as_str().map(str::to_string).or_else(|| {
+                ["target", "translation", "translated", "text"]
+                    .iter()
+                    .find_map(|field| value.get(*field).and_then(|v| v.as_str()))
+                    .map(str::to_string)
+            });
+            if let Some(text) = extracted {
+                insert_non_empty(&mut map, id, text);
             }
+        }
+        if !map.is_empty() {
+            return Some(map);
+        }
+    }
+
+    None
+}
+
+fn recover_partial_translation_items(text: &str) -> HashMap<usize, String> {
+    let mut translation_map = HashMap::new();
+    let mut brace_stack: Vec<usize> = Vec::new();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (idx, ch) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => brace_stack.push(idx),
+            '}' => {
+                if let Some(start) = brace_stack.pop() {
+                    let slice = &text[start..idx + ch.len_utf8()];
+                    if let Ok(item) = serde_json::from_str::<TranslationItem>(slice) {
+                        insert_non_empty(&mut translation_map, item.id, item.target);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
     translation_map
+}
+
+pub(crate) fn parse_translation_json(raw_content: &str) -> HashMap<usize, String> {
+    let stripped = strip_reasoning_block(raw_content).trim();
+    if stripped.is_empty() {
+        return HashMap::new();
+    }
+
+    let fenced = extract_fenced_block(stripped);
+    let candidates = [
+        Some(stripped),
+        fenced,
+        extract_outer_json_slice(stripped),
+        fenced.and_then(extract_outer_json_slice),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(parsed) = try_parse_json_candidate(candidate) {
+            if !parsed.is_empty() {
+                return parsed;
+            }
+        }
+    }
+
+    recover_partial_translation_items(fenced.unwrap_or(stripped))
 }
 
 pub(crate) fn extract_openai_usage(resp: &OpenAiChatResponse) -> LlmUsageStats {
@@ -324,6 +456,29 @@ mod tests {
         assert!(parse_models_list_json(empty_data, "OpenAI")
             .expect("parse empty")
             .is_empty());
+    }
+
+    #[test]
+    fn parses_translation_json_across_wrapped_and_truncated_formats() {
+        let prose_wrapped = r#"<think>internal reasoning</think>
+Here is the translation:
+```json
+{"translations":[{"id":"0","target":"Halo!"},{"id":1,"translation":"Apa kabar?"}]}
+```
+Done."#;
+        let parsed = parse_translation_json(prose_wrapped);
+        assert_eq!(parsed.get(&0).map(String::as_str), Some("Halo!"));
+        assert_eq!(parsed.get(&1).map(String::as_str), Some("Apa kabar?"));
+
+        let truncated = r#"```json
+{"translations":[{"id":0,"target":"Pertama"},{"id":"1","text":"Kedua"},{"id":2,"target":"Terpotong"#;
+        let recovered = parse_translation_json(truncated);
+        assert_eq!(recovered.len(), 2);
+        assert_eq!(recovered.get(&0).map(String::as_str), Some("Pertama"));
+        assert_eq!(recovered.get(&1).map(String::as_str), Some("Kedua"));
+
+        let empty_targets = r#"{"translations":[{"id":0,"target":"   "}]}"#;
+        assert!(parse_translation_json(empty_targets).is_empty());
     }
 }
 

@@ -1,0 +1,195 @@
+use image::{Rgb, RgbImage};
+
+pub(super) fn pixel_distance(px: &Rgb<u8>, bg: [f32; 3]) -> f32 {
+    let dr = px[0] as f32 - bg[0];
+    let dg = px[1] as f32 - bg[1];
+    let db = px[2] as f32 - bg[2];
+    (dr * dr + dg * dg + db * db).sqrt()
+}
+
+pub(super) fn pixel_luminance(px: &Rgb<u8>) -> f32 {
+    0.299 * px[0] as f32 + 0.587 * px[1] as f32 + 0.114 * px[2] as f32
+}
+
+pub(super) fn compute_block_start_y(
+    center_y: f32,
+    total_h: f32,
+    min_y: f32,
+    max_y: f32,
+    edge_margin: f32,
+    img_h: f32,
+) -> f32 {
+    let mut start_y = (center_y - total_h * 0.5).max(min_y);
+    if start_y + total_h > max_y {
+        start_y = (max_y - total_h).max(min_y);
+    }
+    start_y.clamp(edge_margin, (img_h - total_h - edge_margin).max(edge_margin))
+}
+
+fn scan_row_borders(
+    img: &RgbImage,
+    cx: i32,
+    sy: u32,
+    min_x: i32,
+    max_x: i32,
+) -> (Option<f32>, bool, Option<f32>, bool) {
+    let w = img.width() as i32;
+    let left = (min_x..=cx)
+        .rev()
+        .find(|&sx| pixel_luminance(img.get_pixel(sx as u32, sy)) < 150.0)
+        .map(|sx| sx as f32 + 1.0);
+    let right = (cx..=max_x)
+        .find(|&sx| pixel_luminance(img.get_pixel(sx as u32, sy)) < 150.0)
+        .map(|sx| sx as f32);
+    let (l_val, l_real) = match left {
+        Some(lx) => (Some(lx), true),
+        None if min_x == 0 => (Some(0.0), false),
+        None => (None, false),
+    };
+    let (r_val, r_real) = match right {
+        Some(rx) => (Some(rx), true),
+        None if max_x == w - 1 => (Some(w as f32), false),
+        None => (None, false),
+    };
+    (l_val, l_real, r_val, r_real)
+}
+
+pub(super) fn measure_block_cap_safe_span(
+    img: &RgbImage,
+    center_x: f32,
+    base_w: f32,
+    base_h: f32,
+    top_y: f32,
+    bot_y: f32,
+) -> Option<f32> {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let cx = (center_x.round() as i32).clamp(0, w - 1);
+    let max_scan = (base_w.max(base_h * 0.5) * 1.25 + 48.0).min(w as f32 * 0.45) as i32;
+    let (min_x, max_x) = ((cx - max_scan).max(0), (cx + max_scan).min(w - 1));
+    let mut min_span = f32::INFINITY;
+    for y_f in [top_y, bot_y] {
+        let sy = (y_f.round() as i32).clamp(0, h - 1) as u32;
+        if pixel_luminance(img.get_pixel(cx as u32, sy)) < 200.0 {
+            continue;
+        }
+        let (lx_opt, _, rx_opt, _) = scan_row_borders(img, cx, sy, min_x, max_x);
+        if let (Some(lx), Some(rx)) = (lx_opt, rx_opt) {
+            let span = ((center_x - (lx + 7.0)).min((rx - 7.0) - center_x) * 2.0).max(24.0);
+            min_span = min_span.min(span);
+        }
+    }
+    min_span.is_finite().then_some(min_span)
+}
+
+pub(super) fn detect_horizontal_bubble_bounds(
+    img: &RgbImage,
+    center_x: f32,
+    center_y: f32,
+    base_w: f32,
+    base_h: f32,
+) -> Option<(f32, f32)> {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    if w < 16 || h < 16 {
+        return None;
+    }
+
+    let cx = (center_x.round() as i32).clamp(0, w - 1);
+    let cy = (center_y.round() as i32).clamp(0, h - 1);
+    let mut sum = [0.0f32; 3];
+    let mut samples = Vec::with_capacity(25);
+    for dy in -2..=2 {
+        let sy = (cy + dy).clamp(0, h - 1) as u32;
+        for dx in -2..=2 {
+            let p = *img.get_pixel((cx + dx).clamp(0, w - 1) as u32, sy);
+            sum[0] += p[0] as f32;
+            sum[1] += p[1] as f32;
+            sum[2] += p[2] as f32;
+            samples.push(p);
+        }
+    }
+    let center_bg = [sum[0] / 25.0, sum[1] / 25.0, sum[2] / 25.0];
+    if samples.iter().any(|p| pixel_distance(p, center_bg) > 25.0) {
+        return None;
+    }
+
+    let center_lum = 0.299 * center_bg[0] + 0.587 * center_bg[1] + 0.114 * center_bg[2];
+    let center_chroma = center_bg[0].max(center_bg[1]).max(center_bg[2])
+        - center_bg[0].min(center_bg[1]).min(center_bg[2]);
+    if center_lum < 228.0 || center_chroma > 18.0 {
+        return None;
+    }
+
+    let max_scan = (base_w.max(base_h * 0.5) * 1.25 + 48.0).min(w as f32 * 0.45) as i32;
+    let (min_x, max_x) = ((cx - max_scan).max(0), (cx + max_scan).min(w - 1));
+    let (mut max_left, mut min_right) = (0.0_f32, w as f32);
+    let (mut valid_rows, mut real_left, mut real_right) = (0usize, 0usize, 0usize);
+
+    let find_interior_sy = |sign: i32| -> Option<i32> {
+        for frac in [0.40_f32, 0.35, 0.28, 0.20] {
+            let sy = (cy + sign * (base_h * frac).round() as i32).clamp(0, h - 1);
+            let px = img.get_pixel(cx as u32, sy as u32);
+            if pixel_luminance(px) >= 200.0 && pixel_distance(px, center_bg) <= 35.0 {
+                return Some(sy);
+            }
+        }
+        None
+    };
+
+    for sy_i in [find_interior_sy(-1), Some(cy), find_interior_sy(1)]
+        .into_iter()
+        .flatten()
+    {
+        let (lx_opt, lr, rx_opt, rr) = scan_row_borders(img, cx, sy_i as u32, min_x, max_x);
+        if let (Some(lx), Some(rx)) = (lx_opt, rx_opt) {
+            max_left = max_left.max(lx);
+            min_right = min_right.min(rx);
+            valid_rows += 1;
+            real_left += usize::from(lr);
+            real_right += usize::from(rr);
+        }
+    }
+
+    if valid_rows < 3 || real_left < 2 || real_right < 2 || (min_right - max_left - 14.0) < 24.0
+    {
+        return None;
+    }
+    Some((max_left, min_right))
+}
+
+pub(super) fn detect_vertical_bubble_bounds(
+    img: &RgbImage,
+    center_x: f32,
+    center_y: f32,
+    base_h: f32,
+) -> Option<(f32, f32)> {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let cx = (center_x.round() as i32).clamp(0, w - 1);
+    let cy = (center_y.round() as i32).clamp(0, h - 1);
+    let max_scan = (base_h * 0.80 + 48.0).min(h as f32 * 0.45) as i32;
+    let (min_y, max_y) = ((cy - max_scan).max(0), (cy + max_scan).min(h - 1));
+    let (mut max_top_border_y, mut min_bot_border_y, mut hit_both) = (0.0_f32, h as f32, 0usize);
+
+    for dx in [-6_i32, 0, 6] {
+        let sx = (cx + dx).clamp(0, w - 1) as u32;
+        if pixel_luminance(img.get_pixel(sx, cy as u32)) < 200.0 {
+            continue;
+        }
+        let top_hit = (min_y..=cy)
+            .rev()
+            .find(|&sy| pixel_luminance(img.get_pixel(sx, sy as u32)) < 150.0)
+            .map(|sy| sy as f32 + 1.0);
+        let bot_hit = (cy..=max_y)
+            .find(|&sy| pixel_luminance(img.get_pixel(sx, sy as u32)) < 150.0)
+            .map(|sy| sy as f32);
+        if let (Some(ty), Some(by)) = (top_hit, bot_hit) {
+            max_top_border_y = max_top_border_y.max(ty);
+            min_bot_border_y = min_bot_border_y.min(by);
+            hit_both += 1;
+        }
+    }
+
+    if hit_both < 3 || (min_bot_border_y - max_top_border_y - 12.0) < 20.0 {
+        return None;
+    }
+    Some((max_top_border_y, min_bot_border_y))
+}

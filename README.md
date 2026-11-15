@@ -22,9 +22,12 @@ A fast, lightweight, and native Rust translation and typesetting server for mang
 
 | RAW | Translated |
 | :--- | :--- |
-| ![RAW Sample](sample/raw.png) | ![Translated Sample](sample/translated.png) |
-
+| ![RAW Sample](sample/raw.png) | ![Translated Sample](sample/translated.png) | 
 Source: https://id.pinterest.com/pin/614600680437863284/
+
+| Step By Step Translation | Step By Step Translation |
+| :---: | :---: |
+| <img src="sample/res2.png" width="400" alt="Step By Step Sample 1"> | <img src="sample/res3.png" width="400" alt="Step By Step Sample 2"> |
 
 ## Quick Start
 

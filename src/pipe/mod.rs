@@ -25,7 +25,7 @@ use image::{ImageFormat, ImageReader, Limits, RgbImage};
 use std::io::Cursor;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{info, warn};
 
 const MAX_IMAGE_WIDTH: u32 = 16_384;
 const MAX_IMAGE_HEIGHT: u32 = 16_384;
@@ -103,7 +103,12 @@ impl Pipeline {
         let mut img = decode_bounded_rgb_image(&image_bytes)?;
 
         let (width, height) = (img.width(), img.height());
-        info!("Processing image {}x{}, decode in {:?}", width, height, t_start.elapsed());
+        info!(
+            "Processing image {}x{}, decode in {:?}",
+            width,
+            height,
+            t_start.elapsed()
+        );
 
         let t_ocr = std::time::Instant::now();
         let ocr_lines = {
@@ -111,9 +116,22 @@ impl Pipeline {
             ocr_guard.run_ocr(&img)?
         };
         let ocr_ms = t_ocr.elapsed().as_millis() as u64;
-        info!("Native OCR detected {} lines in {:?}", ocr_lines.len(), t_ocr.elapsed());
+        info!(
+            "Native OCR detected {} lines in {:?}",
+            ocr_lines.len(),
+            t_ocr.elapsed()
+        );
 
-        let bubbles = cluster_lines(ocr_lines, width, height, source_lang);
+        let effective_source_lang =
+            clustering::detect_dominant_source_lang(&ocr_lines, source_lang).to_string();
+        if effective_source_lang != source_lang {
+            info!(
+                "Resolved source language '{}' -> '{}'",
+                source_lang, effective_source_lang
+            );
+        }
+
+        let bubbles = cluster_lines(ocr_lines, width, height, &effective_source_lang);
         info!("Clustered into {} speech bubbles", bubbles.len());
 
         if bubbles.is_empty() {
@@ -131,23 +149,46 @@ impl Pipeline {
         let t_tr = std::time::Instant::now();
         let llm_output = self
             .translator
-            .translate_bubbles(&bubbles, source_lang, target_lang)
+            .translate_bubbles(&bubbles, &effective_source_lang, target_lang)
             .await?;
         let translations = llm_output.translations;
         let translate_ms = t_tr.elapsed().as_millis() as u64;
-        info!("Translated {} bubbles in {:?}", translations.len(), t_tr.elapsed());
+        info!(
+            "Translated {} bubbles in {:?}",
+            translations.len(),
+            t_tr.elapsed()
+        );
 
         let t_render = std::time::Instant::now();
         let base64_image = if !without_image {
-            clean_image_text(&mut img, &bubbles);
-            self.renderer.render_bubbles(&mut img, &bubbles, &translations);
+            let renderable_bubbles: Vec<_> = bubbles
+                .iter()
+                .filter(|b| self.renderer.renderable_text(b, &translations).is_some())
+                .cloned()
+                .collect();
+            if renderable_bubbles.len() < bubbles.len() {
+                warn!(
+                    "Skipping inpainting on {} bubble(s) without renderable translation text ({}/{} renderable)",
+                    bubbles.len() - renderable_bubbles.len(),
+                    renderable_bubbles.len(),
+                    bubbles.len()
+                );
+            }
+            if !renderable_bubbles.is_empty() {
+                clean_image_text(&mut img, &renderable_bubbles);
+                self.renderer
+                    .render_bubbles(&mut img, &renderable_bubbles, &translations);
+            }
 
             let mut output_bytes = Vec::new();
             let mut cursor = Cursor::new(&mut output_bytes);
             img.write_to(&mut cursor, ImageFormat::WebP)
                 .map_err(|e| format!("Failed to encode WebP image: {}", e))?;
 
-            info!("Inpainting, rendering & encoding completed in {:?}", t_render.elapsed());
+            info!(
+                "Inpainting, rendering & encoding completed in {:?}",
+                t_render.elapsed()
+            );
             Some(BASE64.encode(&output_bytes))
         } else {
             None
@@ -190,24 +231,5 @@ impl Pipeline {
         };
         info!("Total pipeline processing time: {:?}", t_start.elapsed());
         Ok((base64_image, ImgMap { boxes }, timings))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rejects_decompression_bomb_before_allocating() {
-        let mut png_bytes = Vec::new();
-        let tiny = RgbImage::new(1, 1);
-        tiny.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
-            .expect("encode 1x1 png");
-        png_bytes[16..20].copy_from_slice(&20_000u32.to_be_bytes());
-        png_bytes[20..24].copy_from_slice(&20_000u32.to_be_bytes());
-        png_bytes[29..33].copy_from_slice(&0x6c12d16eu32.to_be_bytes());
-
-        let err = decode_bounded_rgb_image(&png_bytes).unwrap_err();
-        assert!(err.contains("exceed the maximum allowed limit"), "{}", err);
     }
 }

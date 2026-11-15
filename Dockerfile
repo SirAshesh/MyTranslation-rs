@@ -34,7 +34,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libstdc++6 \
     libssl3t64 \
     pciutils \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
+
+RUN arch="$(dpkg --print-architecture)" && \
+    case "$arch" in \
+        amd64) node_arch="x64" ;; \
+        arm64) node_arch="arm64" ;; \
+        *) echo "Unsupported architecture: $arch" && exit 1 ;; \
+    esac && \
+    curl -fsSL "https://nodejs.org/dist/v22.14.0/node-v22.14.0-linux-${node_arch}.tar.xz" \
+    | tar -xJ --strip-components=1 -C /usr/local
 
 WORKDIR /app
 

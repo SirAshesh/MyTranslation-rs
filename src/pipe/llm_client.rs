@@ -57,7 +57,12 @@ fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
         label: "OpenAI-compatible endpoint",
         url: resolve_openai_url(&cfg.openai_base_url),
         api_key: Some(api_key.to_string()),
-        model: if model.is_empty() { "deepseek-chat" } else { model }.to_string(),
+        model: if model.is_empty() {
+            "deepseek-chat"
+        } else {
+            model
+        }
+        .to_string(),
         is_local: false,
         temperature: 0.3,
         unreachable_hint: "",
@@ -120,12 +125,10 @@ impl LlmClient {
             ));
         }
 
-        response.json().await.map_err(|e| {
-            (
-                None,
-                format!("Failed to parse {} response: {}", label, e),
-            )
-        })
+        response
+            .json()
+            .await
+            .map_err(|e| (None, format!("Failed to parse {} response: {}", label, e)))
     }
 
     pub(crate) async fn ping_openai_compatible(
@@ -149,9 +152,16 @@ impl LlmClient {
             stop: None,
             response_format: None,
         };
-        self.send_chat(url, api_key, label, unreachable_hint, timeout_secs, &request)
-            .await
-            .map(|_| ())
+        self.send_chat(
+            url,
+            api_key,
+            label,
+            unreachable_hint,
+            timeout_secs,
+            &request,
+        )
+        .await
+        .map(|_| ())
     }
 
     pub(crate) async fn send_openai_compatible_translation(
@@ -181,7 +191,7 @@ impl LlmClient {
                 },
             ],
             temperature,
-            max_tokens: 2048,
+            max_tokens: 8192,
             top_p: None,
             stop: None,
             response_format: Some(ResponseFormat {
@@ -190,7 +200,14 @@ impl LlmClient {
         };
 
         let chat_response = self
-            .send_chat(url, api_key, label, unreachable_hint, timeout_secs, &request)
+            .send_chat(
+                url,
+                api_key,
+                label,
+                unreachable_hint,
+                timeout_secs,
+                &request,
+            )
             .await?;
         let usage = extract_openai_usage(&chat_response);
         let raw_content = chat_response
@@ -199,8 +216,20 @@ impl LlmClient {
             .and_then(|choice| choice.message.content.as_deref())
             .unwrap_or_default();
 
+        let translations = parse_translation_json(raw_content);
+        if !bubbles.is_empty() && translations.is_empty() {
+            return Err((
+                Some(502),
+                format!(
+                    "{} returned empty or unparseable translation JSON for {} bubble(s)",
+                    label,
+                    bubbles.len()
+                ),
+            ));
+        }
+
         Ok(LlmTranslationOutput {
-            translations: parse_translation_json(raw_content),
+            translations,
             usage,
         })
     }
@@ -222,7 +251,10 @@ impl LlmClient {
         )
         .await
         .map_err(|(_, msg)| msg)?;
-        Ok(format!("Connected to {} (model: {}).", endpoint.url, endpoint.model))
+        Ok(format!(
+            "Connected to {} (model: {}).",
+            endpoint.url, endpoint.model
+        ))
     }
 
     async fn translate_hymt_local(
@@ -378,7 +410,10 @@ impl LlmClient {
         } else {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            Err(format!("Claude endpoint returned HTTP {}: {}", status, body))
+            Err(format!(
+                "Claude endpoint returned HTTP {}: {}",
+                status, body
+            ))
         }
     }
 
@@ -409,7 +444,7 @@ impl LlmClient {
 
         let cached_req = ClaudeCachedMessageRequest {
             model: &model,
-            max_tokens: 2048,
+            max_tokens: 8192,
             system: vec![ClaudeSystemBlock {
                 block_type: "text",
                 text: system_prompt,
@@ -439,7 +474,7 @@ impl LlmClient {
             {
                 let plain_req = ClaudeMessageRequest {
                     model,
-                    max_tokens: 2048,
+                    max_tokens: 8192,
                     system: system_prompt.to_string(),
                     messages: user_messages,
                     temperature: 0.3,
@@ -462,7 +497,10 @@ impl LlmClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Claude endpoint returned HTTP {}: {}", status, body));
+            return Err(format!(
+                "Claude endpoint returned HTTP {}: {}",
+                status, body
+            ));
         }
 
         let claude_res: ClaudeMessageResponse = resp
@@ -477,8 +515,16 @@ impl LlmClient {
             .map(|c| c.text.as_str())
             .unwrap_or_default();
 
+        let translations = parse_translation_json(raw_content);
+        if !bubbles.is_empty() && translations.is_empty() {
+            return Err(format!(
+                "Claude returned empty or unparseable translation JSON for {} bubble(s)",
+                bubbles.len()
+            ));
+        }
+
         Ok(LlmTranslationOutput {
-            translations: parse_translation_json(raw_content),
+            translations,
             usage,
         })
     }

@@ -1,9 +1,21 @@
+#[path = "renderer_bounds.rs"]
+mod renderer_bounds;
+
 use crate::model::Bubble;
 use ab_glyph::{Font, FontArc, PxScale, PxScaleFont, ScaleFont};
 use image::{Rgb, RgbImage, Rgba, RgbaImage};
+use renderer_bounds::{
+    compute_block_start_y, detect_horizontal_bubble_bounds, detect_vertical_bubble_bounds,
+    measure_block_cap_safe_span,
+};
 use std::collections::HashMap;
 
 const MIN_TILT_RAD: f32 = 0.026;
+
+enum RenderTarget<'a> {
+    Rgb(&'a mut RgbImage),
+    Rgba(&'a mut RgbaImage),
+}
 
 pub struct ComicRenderer {
     font: FontArc,
@@ -18,41 +30,89 @@ impl ComicRenderer {
         Ok(Self { font })
     }
 
+    pub fn renderable_text(
+        &self,
+        bubble: &Bubble,
+        translations: &HashMap<usize, String>,
+    ) -> Option<String> {
+        let raw_target = match translations.get(&bubble.id) {
+            Some(t) if !t.trim().is_empty() => t.trim().to_uppercase(),
+            _ => return None,
+        };
+        let target_text: String = raw_target
+            .chars()
+            .filter(|&ch| ch.is_whitespace() || self.font.glyph_id(ch).0 != 0)
+            .collect();
+        let trimmed = target_text.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(trimmed.to_string())
+    }
+
     pub fn render_bubbles(
         &self,
         img: &mut RgbImage,
         bubbles: &[Bubble],
         translations: &HashMap<usize, String>,
     ) {
-        for b in bubbles {
-            let raw_target = match translations.get(&b.id) {
-                Some(t) if !t.trim().is_empty() => t.trim().to_uppercase(),
-                _ => continue,
-            };
-            let target_text: String = raw_target
-                .chars()
-                .filter(|&ch| ch.is_whitespace() || self.font.glyph_id(ch).0 != 0)
-                .collect();
-            let target_text = target_text.trim();
-            if target_text.is_empty() {
-                continue;
-            }
+        let img_w = img.width() as f32;
+        let img_h = img.height() as f32;
+        let edge_margin = 4.0_f32;
 
-            let center_x = if b.oriented_w > 1.0 {
-                b.cx
-            } else {
-                (b.x1 + b.x2) / 2.0
+        for b in bubbles {
+            let target_text = match self.renderable_text(b, translations) {
+                Some(text) => text,
+                None => continue,
             };
-            let center_y = if b.oriented_h > 1.0 {
-                b.cy
-            } else {
-                (b.y1 + b.y2) / 2.0
-            };
+
+            let orig_cx = if b.oriented_w > 1.0 { b.cx } else { (b.x1 + b.x2) * 0.5 };
+            let orig_cy = if b.oriented_h > 1.0 { b.cy } else { (b.y1 + b.y2) * 0.5 };
+            let mut center_x = orig_cx;
+            let mut center_y = orig_cy;
             let base_w = if b.oriented_w > 1.0 { b.oriented_w } else { b.w };
             let base_h = if b.oriented_h > 1.0 { b.oriented_h } else { b.h };
 
-            let safe_w = (base_w * 1.15).max(28.0);
-            let safe_h = (base_h * 1.22).max(14.0);
+            let mut safe_w = base_w.max(28.0);
+            let mut safe_h = (base_h * 1.15).max(14.0);
+            let mut has_bubble_bounds = false;
+            let mut vert_bounds: Option<(f32, f32)> = None;
+            if b.angle_rad.abs() < MIN_TILT_RAD {
+                if let Some((max_left_border_x, min_right_border_x)) =
+                    detect_horizontal_bubble_bounds(img, orig_cx, orig_cy, base_w, base_h)
+                {
+                    has_bubble_bounds = true;
+                    let left_safe = max_left_border_x + 7.0;
+                    let right_safe = min_right_border_x - 7.0;
+                    let measured_w = (right_safe - left_safe).max(24.0);
+                    let raw_cx = (left_safe + right_safe) * 0.5;
+                    let max_shift = b.w * 0.10;
+                    center_x = raw_cx.clamp(orig_cx - max_shift, orig_cx + max_shift);
+
+                    let clamped_span =
+                        (center_x - left_safe).min(right_safe - center_x).max(12.0) * 2.0;
+                    let target_w = if b.h > b.w * 1.25 && measured_w > b.w {
+                        measured_w.min(b.h * 0.80)
+                    } else {
+                        measured_w.clamp(24.0, (base_w * 1.30).max(24.0))
+                    };
+                    safe_w = target_w.min(clamped_span).max(24.0);
+
+                    if let Some((top_b, bot_b)) =
+                        detect_vertical_bubble_bounds(img, center_x, orig_cy, base_h)
+                    {
+                        let top_safe = top_b + 6.0;
+                        let bot_safe = bot_b - 6.0;
+                        center_y = ((top_safe + bot_safe) * 0.5)
+                            .clamp(orig_cy - base_h * 0.18, orig_cy + base_h * 0.18);
+                        let max_span_h =
+                            ((center_y - top_safe).min(bot_safe - center_y).max(7.0) * 2.0)
+                                .min(bot_safe - top_safe);
+                        safe_h = safe_h.min(max_span_h).max(14.0);
+                        vert_bounds = Some((top_safe, bot_safe));
+                    }
+                }
+            }
 
             let words: Vec<&str> = target_text.split_whitespace().collect();
             if words.is_empty() {
@@ -61,68 +121,77 @@ impl ComicRenderer {
 
             let candidate_sizes = [
                 38.0, 34.0, 30.0, 28.0, 26.0, 24.0, 22.0, 20.0, 18.0, 16.5, 15.0, 14.0, 13.0, 12.0,
-                11.0, 10.5, 10.0, 9.5, 9.0, 8.5, 8.0, 7.5,
+                11.0, 10.5, 10.0, 9.5, 9.0, 8.5, 8.0, 7.5, 7.0, 6.5,
             ];
-
-            let mut best_size = 8.0;
+            let (bound_min_y, bound_max_y) = vert_bounds.unwrap_or((b.y1 - 6.0, b.y2 + 8.0));
+            let mut best_size = 6.5;
             let mut best_lines: Vec<String> = Vec::new();
-
             for &size in &candidate_sizes {
-                let scale = PxScale::from(size);
-                let scaled_font = self.font.as_scaled(scale);
+                let scaled_font = self.font.as_scaled(PxScale::from(size));
                 let lines = self.wrap_words(&scaled_font, &words, safe_w);
-
-                let line_height = scaled_font.height() * 1.12;
-                let total_h = (lines.len() as f32) * line_height;
-                let max_w = lines
-                    .iter()
-                    .map(|l| self.measure_line_width(&scaled_font, l))
-                    .fold(0.0_f32, f32::max);
-
-                if total_h <= safe_h && max_w <= safe_w * 1.08 {
+                let total_h = (lines.len() as f32) * (scaled_font.height() * 1.12);
+                let max_w = lines.iter().map(|l| self.measure_line_width(&scaled_font, l)).fold(0.0_f32, f32::max);
+                let cap_ok = if !has_bubble_bounds {
+                    true
+                } else {
+                    let cand_start_y = compute_block_start_y(
+                        center_y,
+                        total_h,
+                        bound_min_y,
+                        bound_max_y,
+                        edge_margin,
+                        img_h,
+                    );
+                    measure_block_cap_safe_span(
+                        img,
+                        center_x,
+                        base_w,
+                        base_h,
+                        cand_start_y + 2.0,
+                        cand_start_y + total_h - 4.0,
+                    )
+                    .map_or(true, |cap_span| max_w <= cap_span)
+                };
+                if total_h <= safe_h && max_w <= safe_w && cap_ok {
                     best_size = size;
                     best_lines = lines;
                     break;
                 }
             }
-
             if best_lines.is_empty() {
-                best_size = 7.5;
-                let scale = PxScale::from(best_size);
-                let scaled_font = self.font.as_scaled(scale);
-                best_lines = self.wrap_words(&scaled_font, &words, safe_w * 1.15);
+                let scaled_font = self.font.as_scaled(PxScale::from(best_size));
+                best_lines = self.wrap_words(&scaled_font, &words, safe_w);
             }
 
-            let scale = PxScale::from(best_size);
-            let scaled_font = self.font.as_scaled(scale);
+            let scaled_font = self.font.as_scaled(PxScale::from(best_size));
             let line_height = scaled_font.height() * 1.12;
             let total_h = (best_lines.len() as f32) * line_height;
-            let max_line_w = best_lines
-                .iter()
-                .map(|l| self.measure_line_width(&scaled_font, l))
-                .fold(0.0_f32, f32::max);
-            let block_left = -(max_line_w.max(base_w).min(safe_w)) * 0.5;
+            let max_line_w = best_lines.iter().map(|l| self.measure_line_width(&scaled_font, l)).fold(0.0_f32, f32::max);
+            let block_left = -(max_line_w.min(safe_w)) * 0.5;
 
             if b.angle_rad.abs() < MIN_TILT_RAD {
-                let mut start_y = center_y - total_h / 2.0;
-                if start_y < b.y1 - 6.0 {
-                    start_y = b.y1 - 6.0;
-                }
-                if start_y + total_h > b.y2 + 8.0 {
-                    start_y = (b.y2 + 8.0 - total_h).max(b.y1 - 6.0);
-                }
+                let start_y = compute_block_start_y(
+                    center_y,
+                    total_h,
+                    bound_min_y,
+                    bound_max_y,
+                    edge_margin,
+                    img_h,
+                );
 
                 for (idx, line) in best_lines.iter().enumerate() {
                     let line_w = self.measure_line_width(&scaled_font, line);
-                    let line_x = if b.is_left_aligned {
+                    let raw_line_x = if b.is_left_aligned {
                         center_x + block_left
                     } else {
                         center_x - line_w / 2.0
                     };
+                    let line_x = raw_line_x
+                        .clamp(edge_margin, (img_w - line_w - edge_margin).max(edge_margin));
                     let line_y = start_y + (idx as f32) * line_height;
 
-                    self.draw_stroked_text_rgb(
-                        img,
+                    self.draw_stroked_text(
+                        RenderTarget::Rgb(img),
                         &scaled_font,
                         line,
                         line_x,
@@ -150,8 +219,8 @@ impl ComicRenderer {
                     };
                     let line_y = local_start_y + (idx as f32) * line_height;
 
-                    self.draw_stroked_text_rgba(
-                        &mut overlay,
+                    self.draw_stroked_text(
+                        RenderTarget::Rgba(&mut overlay),
                         &scaled_font,
                         line,
                         line_x,
@@ -161,7 +230,19 @@ impl ComicRenderer {
                     );
                 }
 
-                composite_rotated_overlay(img, &overlay, center_x, center_y, b.angle_rad);
+                let cos_a = b.angle_rad.cos().abs();
+                let sin_a = b.angle_rad.sin().abs();
+                let radius_x = buf_w as f32 * 0.5 * cos_a + buf_h as f32 * 0.5 * sin_a;
+                let radius_y = buf_w as f32 * 0.5 * sin_a + buf_h as f32 * 0.5 * cos_a;
+                let clamped_cx = center_x.clamp(
+                    radius_x + edge_margin,
+                    (img_w - radius_x - edge_margin).max(radius_x + edge_margin),
+                );
+                let clamped_cy = center_y.clamp(
+                    radius_y + edge_margin,
+                    (img_h - radius_y - edge_margin).max(radius_y + edge_margin),
+                );
+                composite_rotated_overlay(img, &overlay, clamped_cx, clamped_cy, b.angle_rad);
             }
         }
     }
@@ -207,9 +288,10 @@ impl ComicRenderer {
         width
     }
 
-    fn draw_stroked_text_rgba(
+    #[allow(clippy::too_many_arguments)]
+    fn draw_stroked_text(
         &self,
-        overlay: &mut RgbaImage,
+        mut target: RenderTarget<'_>,
         scaled_font: &PxScaleFont<&FontArc>,
         text: &str,
         x: f32,
@@ -217,67 +299,52 @@ impl ComicRenderer {
         fill_color: Rgb<u8>,
         stroke_color: Rgb<u8>,
     ) {
-        let (buf_w, buf_h) = (overlay.width() as i32, overlay.height() as i32);
+        let (width, height) = match &target {
+            RenderTarget::Rgb(img) => (img.width() as i32, img.height() as i32),
+            RenderTarget::Rgba(overlay) => (overlay.width() as i32, overlay.height() as i32),
+        };
         let offsets = [
             (-1, 0), (1, 0), (0, -1), (0, 1),
             (-1, -1), (1, 1), (-1, 1), (1, -1),
         ];
-
         for (ox, oy) in offsets {
             self.rasterize_text(scaled_font, text, x + ox as f32, y + oy as f32, |px, py, c| {
-                if c > 0.35 && px >= 0 && px < buf_w && py >= 0 && py < buf_h {
-                    overlay.put_pixel(px as u32, py as u32, Rgba([stroke_color[0], stroke_color[1], stroke_color[2], 255]));
+                if c > 0.35 && px >= 0 && px < width && py >= 0 && py < height {
+                    match &mut target {
+                        RenderTarget::Rgb(img) => img.put_pixel(px as u32, py as u32, stroke_color),
+                        RenderTarget::Rgba(ov) => ov.put_pixel(
+                            px as u32,
+                            py as u32,
+                            Rgba([stroke_color[0], stroke_color[1], stroke_color[2], 255]),
+                        ),
+                    }
                 }
             });
         }
-
         self.rasterize_text(scaled_font, text, x, y, |px, py, c| {
-            if c > 0.05 && px >= 0 && px < buf_w && py >= 0 && py < buf_h {
-                let dst = overlay.get_pixel(px as u32, py as u32);
-                if dst[3] == 0 {
-                    let a = (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-                    overlay.put_pixel(px as u32, py as u32, Rgba([fill_color[0], fill_color[1], fill_color[2], a]));
-                } else {
-                    let r = ((1.0 - c) * dst[0] as f32 + c * fill_color[0] as f32).round() as u8;
-                    let g = ((1.0 - c) * dst[1] as f32 + c * fill_color[1] as f32).round() as u8;
-                    let b = ((1.0 - c) * dst[2] as f32 + c * fill_color[2] as f32).round() as u8;
-                    overlay.put_pixel(px as u32, py as u32, Rgba([r, g, b, 255]));
+            if c > 0.05 && px >= 0 && px < width && py >= 0 && py < height {
+                let (ux, uy) = (px as u32, py as u32);
+                match &mut target {
+                    RenderTarget::Rgb(img) => {
+                        let cur = img.get_pixel(ux, uy);
+                        let r = ((1.0 - c) * cur[0] as f32 + c * fill_color[0] as f32) as u8;
+                        let g = ((1.0 - c) * cur[1] as f32 + c * fill_color[1] as f32) as u8;
+                        let b = ((1.0 - c) * cur[2] as f32 + c * fill_color[2] as f32) as u8;
+                        img.put_pixel(ux, uy, Rgb([r, g, b]));
+                    }
+                    RenderTarget::Rgba(ov) => {
+                        let dst = ov.get_pixel(ux, uy);
+                        if dst[3] == 0 {
+                            let a = (c.clamp(0.0, 1.0) * 255.0).round() as u8;
+                            ov.put_pixel(ux, uy, Rgba([fill_color[0], fill_color[1], fill_color[2], a]));
+                        } else {
+                            let r = ((1.0 - c) * dst[0] as f32 + c * fill_color[0] as f32).round() as u8;
+                            let g = ((1.0 - c) * dst[1] as f32 + c * fill_color[1] as f32).round() as u8;
+                            let b = ((1.0 - c) * dst[2] as f32 + c * fill_color[2] as f32).round() as u8;
+                            ov.put_pixel(ux, uy, Rgba([r, g, b, 255]));
+                        }
+                    }
                 }
-            }
-        });
-    }
-
-    fn draw_stroked_text_rgb(
-        &self,
-        img: &mut RgbImage,
-        scaled_font: &PxScaleFont<&FontArc>,
-        text: &str,
-        x: f32,
-        y: f32,
-        fill_color: Rgb<u8>,
-        stroke_color: Rgb<u8>,
-    ) {
-        let (img_w, img_h) = (img.width() as i32, img.height() as i32);
-        let offsets = [
-            (-1, 0), (1, 0), (0, -1), (0, 1),
-            (-1, -1), (1, 1), (-1, 1), (1, -1),
-        ];
-
-        for (ox, oy) in offsets {
-            self.rasterize_text(scaled_font, text, x + ox as f32, y + oy as f32, |px, py, c| {
-                if c > 0.35 && px >= 0 && px < img_w && py >= 0 && py < img_h {
-                    img.put_pixel(px as u32, py as u32, stroke_color);
-                }
-            });
-        }
-
-        self.rasterize_text(scaled_font, text, x, y, |px, py, c| {
-            if c > 0.05 && px >= 0 && px < img_w && py >= 0 && py < img_h {
-                let current = img.get_pixel(px as u32, py as u32);
-                let r = ((1.0 - c) * current[0] as f32 + c * fill_color[0] as f32) as u8;
-                let g = ((1.0 - c) * current[1] as f32 + c * fill_color[1] as f32) as u8;
-                let b = ((1.0 - c) * current[2] as f32 + c * fill_color[2] as f32) as u8;
-                img.put_pixel(px as u32, py as u32, Rgb([r, g, b]));
             }
         });
     }
@@ -395,25 +462,5 @@ fn composite_rotated_overlay(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn composite_rotated_overlay_draws_at_tilted_endpoints() {
-        let mut img = RgbImage::from_pixel(200, 200, Rgb([100, 140, 180]));
-        let mut overlay = RgbaImage::new(80, 20);
-        for y in 6..14 {
-            for x in 6..74 {
-                overlay.put_pixel(x, y, Rgba([12, 12, 12, 255]));
-            }
-        }
-
-        let angle = -0.28_f32;
-        composite_rotated_overlay(&mut img, &overlay, 100.0, 100.0, angle);
-
-        let right_up = img.get_pixel(130, 91);
-        let horizontal_far = img.get_pixel(130, 100);
-        assert!(right_up[0] < 40, "expected rotated ink at (130, 91), got {:?}", right_up);
-        assert_eq!(*horizontal_far, Rgb([100, 140, 180]));
-    }
-}
+#[path = "renderer_tests.rs"]
+mod tests;
