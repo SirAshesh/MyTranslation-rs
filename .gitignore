@@ -12,9 +12,9 @@ local/
 models/
 *.png
 !extension/**/*.png
-!sample/raw.png
-!sample/translated.png
 *.webp
+!sample/
+!sample/**
 src/frontend/free
 src/pipe/free_mode
 storage.db
