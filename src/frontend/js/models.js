@@ -109,4 +109,14 @@
         modelSelect: document.getElementById("claude-model-select"),
         fetchBtn: document.getElementById("claude-get-models-btn")
     });
+
+    bindProviderModelFetcher({
+        mode: "byom",
+        label: "BYOM / Ollama",
+        urlInput: document.getElementById("byom-url"),
+        keyInput: document.getElementById("byom-key"),
+        modelInput: document.getElementById("byom-model"),
+        modelSelect: document.getElementById("byom-model-select"),
+        fetchBtn: document.getElementById("byom-get-models-btn")
+    });
 })();

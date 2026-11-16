@@ -32,6 +32,10 @@ fn default_local_model() -> String {
     DEFAULT_LOCAL_QUANT.to_string()
 }
 
+fn default_byom_url() -> String {
+    "http://127.0.0.1:11434".to_string()
+}
+
 fn default_queue_max_concurrent() -> usize {
     10
 }
@@ -68,6 +72,12 @@ pub struct AppConfig {
     pub claude_api_key: String,
     #[serde(default = "default_local_model")]
     pub local_model: String,
+    #[serde(default = "default_byom_url")]
+    pub byom_base_url: String,
+    #[serde(default)]
+    pub byom_model: String,
+    #[serde(default)]
+    pub byom_api_key: String,
     #[serde(default)]
     pub disable_batch_endpoint: bool,
     #[serde(default)]
@@ -99,6 +109,9 @@ impl Default for AppConfig {
             claude_model: default_claude_model(),
             claude_api_key: String::new(),
             local_model: default_local_model(),
+            byom_base_url: default_byom_url(),
+            byom_model: String::new(),
+            byom_api_key: String::new(),
             disable_batch_endpoint: false,
             enable_queue: false,
             queue_max_concurrent: default_queue_max_concurrent(),
@@ -130,6 +143,12 @@ pub struct SaveSettingsForm {
     pub claude_api_key: String,
     #[serde(default = "default_local_model")]
     pub local_model: String,
+    #[serde(default = "default_byom_url")]
+    pub byom_base_url: String,
+    #[serde(default)]
+    pub byom_model: String,
+    #[serde(default)]
+    pub byom_api_key: String,
     #[serde(default)]
     pub disable_batch_endpoint: Option<bool>,
     #[serde(default)]
@@ -164,6 +183,10 @@ pub struct SettingsResponse {
     pub claude_key_configured: bool,
     pub claude_masked_key: String,
     pub local_model: String,
+    pub byom_base_url: String,
+    pub byom_model: String,
+    pub byom_key_configured: bool,
+    pub byom_masked_key: String,
     pub disable_batch_endpoint: bool,
     pub enable_queue: bool,
     pub queue_max_concurrent: usize,
@@ -195,6 +218,12 @@ pub struct TestKeyRequest {
     pub claude_api_key: String,
     #[serde(default)]
     pub local_model: String,
+    #[serde(default)]
+    pub byom_base_url: String,
+    #[serde(default)]
+    pub byom_model: String,
+    #[serde(default)]
+    pub byom_api_key: String,
     #[cfg(feature = "free-mode")]
     #[serde(flatten, default)]
     pub free: FreeSettingsForm,

@@ -73,7 +73,8 @@ fn classify_dominant_lang<'a, 'b>(
         }
     }
 
-    if kana_count >= 2 || (kana_count >= 1 && kana_count + han_count > latin_count) {
+    let cjk_count = kana_count + han_count;
+    if kana_count >= 1 && (cjk_count >= latin_count || (latin_count < 16 && kana_count >= 2)) {
         "ja"
     } else if han_count >= 2 && han_count * 2 > latin_count {
         "zh"
@@ -127,6 +128,191 @@ fn should_suppress_cjk_hallucinations(lines: &[LineInfo], source_lang: &str) -> 
     latin_dialogue_lines >= 2 || (latin_any_lines >= 4 && latin_any_lines > cjk_lines * 2)
 }
 
+pub(crate) fn line_from_ocr_item(
+    item: &OcrLineItem,
+    img_width: u32,
+    img_height: u32,
+) -> Option<LineInfo> {
+    let text = item.text.trim().to_string();
+    if text.is_empty() {
+        return None;
+    }
+
+    let quad = normalize_quad(item.r#box, img_width, img_height);
+    let min_x = quad.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    let max_x = quad.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+    let min_y = quad.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+    let max_y = quad.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+
+    let w = (max_x - min_x).max(1.0);
+    let h = (max_y - min_y).max(1.0);
+    let (true_w, true_h, angle_rad) = compute_oriented_metrics(&quad);
+
+    Some(LineInfo {
+        quad,
+        x1: min_x,
+        y1: min_y,
+        x2: max_x,
+        y2: max_y,
+        cx: (min_x + max_x) / 2.0,
+        cy: (min_y + max_y) / 2.0,
+        w,
+        h,
+        true_w,
+        true_h,
+        angle_rad,
+        text,
+        score: item.score,
+    })
+}
+
+pub(crate) fn rebuild_bubble_from_lines(
+    id: usize,
+    mut dialogue_lines: Vec<LineInfo>,
+    furigana_lines: Vec<LineInfo>,
+    img_width: u32,
+    img_height: u32,
+    source_lang: &str,
+    enforce_junk_filter: bool,
+) -> Option<Bubble> {
+    if dialogue_lines.is_empty() {
+        return None;
+    }
+
+    let (cx1, cy1, cx2, cy2) = dialogue_lines.iter().fold(
+        (
+            f32::INFINITY,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ),
+        |(ax1, ay1, ax2, ay2), line| {
+            (
+                ax1.min(line.x1),
+                ay1.min(line.y1),
+                ax2.max(line.x2),
+                ay2.max(line.y2),
+            )
+        },
+    );
+    let bubble_w = (cx2 - cx1).max(1.0);
+    let bubble_h = (cy2 - cy1).max(1.0);
+    let is_vertical_bubble = is_vertical_bubble_lines(&dialogue_lines, bubble_w, bubble_h);
+
+    let bubble_angle = if is_vertical_bubble {
+        0.0
+    } else {
+        let mut cos_sum = 0.0f32;
+        let mut sin_sum = 0.0f32;
+        for line in &dialogue_lines {
+            let weight = (line.true_w * line.true_h).max(1.0);
+            cos_sum += weight * line.angle_rad.cos();
+            sin_sum += weight * line.angle_rad.sin();
+        }
+        let mean_angle = sin_sum.atan2(cos_sum);
+        if mean_angle.abs() < MIN_TILT_RAD {
+            0.0
+        } else {
+            mean_angle
+        }
+    };
+
+    if is_vertical_bubble {
+        sort_vertical_columns_rtl(&mut dialogue_lines);
+    } else {
+        dialogue_lines.sort_by(|a, b| {
+            let (_, _, av_min, av_max) = project_quad_on_angle(&a.quad, bubble_angle);
+            let (_, _, bv_min, bv_max) = project_quad_on_angle(&b.quad, bubble_angle);
+            let (au_min, au_max, _, _) = project_quad_on_angle(&a.quad, bubble_angle);
+            let (bu_min, bu_max, _, _) = project_quad_on_angle(&b.quad, bubble_angle);
+            let av_mid = (av_min + av_max) * 0.5;
+            let bv_mid = (bv_min + bv_max) * 0.5;
+            let dcv = (bv_mid - av_mid).abs();
+            let row_h = a.true_h.max(b.true_h);
+            if dcv > row_h * 0.45 {
+                av_mid
+                    .partial_cmp(&bv_mid)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                let au_mid = (au_min + au_max) * 0.5;
+                let bu_mid = (bu_min + bu_max) * 0.5;
+                au_mid
+                    .partial_cmp(&bu_mid)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+    }
+
+    let raw_texts: Vec<&str> = dialogue_lines.iter().map(|l| l.text.as_str()).collect();
+    let combined = join_manga_lines(&raw_texts);
+    let normalized = normalize_source_text(&combined);
+    let avg_score =
+        dialogue_lines.iter().map(|l| l.score).sum::<f32>() / dialogue_lines.len().max(1) as f32;
+
+    if enforce_junk_filter && is_junk_or_sfx(&normalized, avg_score, bubble_w, bubble_h) {
+        return None;
+    }
+
+    let (cx, cy, oriented_w, oriented_h, is_left_aligned) =
+        compute_bubble_oriented_box(&dialogue_lines, bubble_angle, is_vertical_bubble);
+
+    let bridges = if is_vertical_bubble {
+        build_vertical_bridge_lines(&dialogue_lines)
+    } else {
+        Vec::new()
+    };
+    let mut inpaint_lines = dialogue_lines;
+    inpaint_lines.extend(furigana_lines);
+    inpaint_lines.extend(bridges);
+
+    let (bx1, by1, bx2, by2) = inpaint_lines.iter().fold(
+        (cx1, cy1, cx2, cy2),
+        |(ax1, ay1, ax2, ay2), line| {
+            (
+                ax1.min(line.x1),
+                ay1.min(line.y1),
+                ax2.max(line.x2),
+                ay2.max(line.y2),
+            )
+        },
+    );
+
+    let lang_lower = source_lang.to_ascii_lowercase();
+    let is_cjk_bubble =
+        lang_lower.starts_with("ja") || lang_lower.starts_with("zh") || contains_cjk(&normalized);
+    if is_cjk_bubble {
+        let is_ja = lang_lower.starts_with("ja") || normalized.chars().any(is_kana_char);
+        inpaint_lines.push(build_cjk_interior_cleanup_line(
+            bx1,
+            by1,
+            bx2,
+            by2,
+            is_ja,
+            is_vertical_bubble,
+            img_width,
+            img_height,
+        ));
+    }
+
+    Some(Bubble {
+        id,
+        x1: bx1,
+        y1: by1,
+        x2: bx2,
+        y2: by2,
+        cx,
+        cy,
+        w: (bx2 - bx1).max(1.0),
+        h: (by2 - by1).max(1.0),
+        oriented_w,
+        oriented_h,
+        angle_rad: bubble_angle,
+        is_left_aligned,
+        source_text: normalized,
+        lines: inpaint_lines,
+    })
+}
+
 pub fn cluster_lines(
     ocr_lines: Vec<OcrLineItem>,
     img_width: u32,
@@ -141,41 +327,15 @@ pub fn cluster_lines(
 
     let mut lines = Vec::new();
     for item in ocr_lines {
-        let text = item.text.trim().to_string();
-        if text.is_empty() {
+        let Some(line) = line_from_ocr_item(&item, img_width, img_height) else {
+            continue;
+        };
+
+        if is_junk_or_sfx(&line.text, line.score, line.true_w, line.true_h) {
             continue;
         }
 
-        let quad = normalize_quad(item.r#box, img_width, img_height);
-        let min_x = quad.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
-        let max_x = quad.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
-        let min_y = quad.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
-        let max_y = quad.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
-
-        let w = (max_x - min_x).max(1.0);
-        let h = (max_y - min_y).max(1.0);
-        let (true_w, true_h, angle_rad) = compute_oriented_metrics(&quad);
-
-        if is_junk_or_sfx(&text, item.score, true_w, true_h) {
-            continue;
-        }
-
-        lines.push(LineInfo {
-            quad,
-            x1: min_x,
-            y1: min_y,
-            x2: max_x,
-            y2: max_y,
-            cx: (min_x + max_x) / 2.0,
-            cy: (min_y + max_y) / 2.0,
-            w,
-            h,
-            true_w,
-            true_h,
-            angle_rad,
-            text,
-            score: item.score,
-        });
+        lines.push(line);
     }
 
     if lines.is_empty() {
@@ -393,124 +553,19 @@ pub fn cluster_lines(
     let mut bubbles = Vec::new();
     let mut bubble_id = 1;
 
-    for mut c in clusters {
-        let bubble_w = (c.x2 - c.x1).max(1.0);
-        let bubble_h = (c.y2 - c.y1).max(1.0);
-        let is_vertical_bubble =
-            is_vertical_bubble_lines(&c.dialogue_lines, bubble_w, bubble_h);
-
-        let bubble_angle = if is_vertical_bubble {
-            0.0
-        } else {
-            let mut cos_sum = 0.0f32;
-            let mut sin_sum = 0.0f32;
-            for line in &c.dialogue_lines {
-                let weight = (line.true_w * line.true_h).max(1.0);
-                cos_sum += weight * line.angle_rad.cos();
-                sin_sum += weight * line.angle_rad.sin();
-            }
-            let mean_angle = sin_sum.atan2(cos_sum);
-            if mean_angle.abs() < MIN_TILT_RAD {
-                0.0
-            } else {
-                mean_angle
-            }
-        };
-
-        if is_vertical_bubble {
-            sort_vertical_columns_rtl(&mut c.dialogue_lines);
-        } else {
-            c.dialogue_lines.sort_by(|a, b| {
-                let (_, _, av_min, av_max) = project_quad_on_angle(&a.quad, bubble_angle);
-                let (_, _, bv_min, bv_max) = project_quad_on_angle(&b.quad, bubble_angle);
-                let (au_min, au_max, _, _) = project_quad_on_angle(&a.quad, bubble_angle);
-                let (bu_min, bu_max, _, _) = project_quad_on_angle(&b.quad, bubble_angle);
-                let av_mid = (av_min + av_max) * 0.5;
-                let bv_mid = (bv_min + bv_max) * 0.5;
-                let dcv = (bv_mid - av_mid).abs();
-                let row_h = a.true_h.max(b.true_h);
-                if dcv > row_h * 0.45 {
-                    av_mid
-                        .partial_cmp(&bv_mid)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                } else {
-                    let au_mid = (au_min + au_max) * 0.5;
-                    let bu_mid = (bu_min + bu_max) * 0.5;
-                    au_mid
-                        .partial_cmp(&bu_mid)
-                        .unwrap_or(std::cmp::Ordering::Equal)
-                }
-            });
+    for c in clusters {
+        if let Some(bubble) = rebuild_bubble_from_lines(
+            bubble_id,
+            c.dialogue_lines,
+            c.furigana_lines,
+            img_width,
+            img_height,
+            effective_source_lang,
+            true,
+        ) {
+            bubbles.push(bubble);
+            bubble_id += 1;
         }
-
-        let raw_texts: Vec<&str> = c.dialogue_lines.iter().map(|l| l.text.as_str()).collect();
-        let combined = join_manga_lines(&raw_texts);
-        let normalized = normalize_source_text(&combined);
-
-        let avg_score = c.dialogue_lines.iter().map(|l| l.score).sum::<f32>()
-            / c.dialogue_lines.len().max(1) as f32;
-
-        if is_junk_or_sfx(&normalized, avg_score, bubble_w, bubble_h) {
-            continue;
-        }
-
-        let (cx, cy, oriented_w, oriented_h, is_left_aligned) =
-            compute_bubble_oriented_box(&c.dialogue_lines, bubble_angle, is_vertical_bubble);
-
-        let bridges = if is_vertical_bubble {
-            build_vertical_bridge_lines(&c.dialogue_lines)
-        } else {
-            Vec::new()
-        };
-        let mut inpaint_lines = c.dialogue_lines;
-        inpaint_lines.extend(c.furigana_lines);
-        inpaint_lines.extend(bridges);
-
-        let (bx1, by1, bx2, by2) = inpaint_lines.iter().fold(
-            (c.x1, c.y1, c.x2, c.y2),
-            |(ax1, ay1, ax2, ay2), line| {
-                (
-                    ax1.min(line.x1),
-                    ay1.min(line.y1),
-                    ax2.max(line.x2),
-                    ay2.max(line.y2),
-                )
-            },
-        );
-
-        let is_cjk_bubble = is_lang_cjk || contains_cjk(&normalized);
-        if is_cjk_bubble {
-            let is_ja = lang_lower.starts_with("ja") || normalized.chars().any(is_kana_char);
-            inpaint_lines.push(build_cjk_interior_cleanup_line(
-                bx1,
-                by1,
-                bx2,
-                by2,
-                is_ja,
-                is_vertical_bubble,
-                img_width,
-                img_height,
-            ));
-        }
-
-        bubbles.push(Bubble {
-            id: bubble_id,
-            x1: bx1,
-            y1: by1,
-            x2: bx2,
-            y2: by2,
-            cx,
-            cy,
-            w: (bx2 - bx1).max(1.0),
-            h: (by2 - by1).max(1.0),
-            oriented_w,
-            oriented_h,
-            angle_rad: bubble_angle,
-            is_left_aligned,
-            source_text: normalized,
-            lines: inpaint_lines,
-        });
-        bubble_id += 1;
     }
 
     bubbles

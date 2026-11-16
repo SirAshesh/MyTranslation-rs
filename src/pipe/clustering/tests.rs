@@ -288,6 +288,14 @@ fn test_detect_dominant_source_lang_for_ja_zh_en() {
     assert_eq!(detect_dominant_source_lang(&en_lines, ""), "en");
     assert_eq!(detect_dominant_source_lang(&en_lines, "en"), "en");
     assert_eq!(detect_dominant_source_lang(&en_lines, "fr"), "fr");
+
+    let mixed_cover_lines = vec![
+        make_line("妹じゃなくて", 0.92),
+        make_line("お前が許嫁", 0.90),
+        make_line("IN OTHER WORDS, YOU AREN'T ACTUALLY RELATED BY BLOOD!", 0.99),
+        make_line("YOU'RE UNHAPPY THAT HE KEEPS TREATING YOU LIKE A SISTER.", 0.99),
+    ];
+    assert_eq!(detect_dominant_source_lang(&mixed_cover_lines, "en"), "en");
 }
 
 #[test]

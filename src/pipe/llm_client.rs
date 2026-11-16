@@ -1,13 +1,13 @@
+#[path = "llm_hymt.rs"]
+mod llm_hymt;
+
 use crate::model::{is_hymt_model, local_server_url, AppConfig, Bubble};
 use crate::pipe::llm_wire::{
     extract_claude_usage, extract_openai_usage, parse_translation_json, ChatMessage,
     ClaudeCacheControl, ClaudeCachedMessageRequest, ClaudeMessageRequest, ClaudeMessageResponse,
     ClaudeSystemBlock, OpenAiChatRequest, OpenAiChatResponse, ResponseFormat,
 };
-use crate::pipe::prompts::{
-    build_hymt_user_prompt, build_translation_user_prompt, initial_system_prompt,
-    normalize_bubble_text, strip_hymt_artifacts,
-};
+use crate::pipe::prompts::{build_translation_user_prompt, initial_system_prompt};
 use crate::utilities::{redact_secrets, resolve_claude_url, resolve_openai_url, LlmUsageStats};
 use reqwest::Client;
 use std::collections::HashMap;
@@ -24,14 +24,14 @@ pub struct LlmTranslationOutput {
     pub usage: LlmUsageStats,
 }
 
-struct ChatEndpoint {
-    label: &'static str,
-    url: String,
-    api_key: Option<String>,
-    model: String,
-    is_local: bool,
-    temperature: f32,
-    unreachable_hint: &'static str,
+pub(super) struct ChatEndpoint {
+    pub(super) label: &'static str,
+    pub(super) url: String,
+    pub(super) api_key: Option<String>,
+    pub(super) model: String,
+    pub(super) is_local: bool,
+    pub(super) temperature: f32,
+    pub(super) unreachable_hint: &'static str,
 }
 
 fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
@@ -44,6 +44,33 @@ fn resolve_chat_endpoint(cfg: &AppConfig) -> Result<ChatEndpoint, String> {
             is_local: true,
             temperature: 0.1,
             unreachable_hint: " Start the model from Settings > Local Model first.",
+        });
+    }
+
+    if cfg.translation_mode == "byom" {
+        let model = cfg.byom_model.trim();
+        if model.is_empty() {
+            return Err("BYOM model is not configured. Open Settings > BYOM (Ollama) to select or enter a model.".to_string());
+        }
+        let raw_base = cfg.byom_base_url.trim();
+        let base_url = if raw_base.is_empty() {
+            "http://127.0.0.1:11434"
+        } else {
+            raw_base
+        };
+        let key = cfg.byom_api_key.trim();
+        return Ok(ChatEndpoint {
+            label: "BYOM / Ollama endpoint",
+            url: resolve_openai_url(base_url),
+            api_key: if key.is_empty() {
+                None
+            } else {
+                Some(key.to_string())
+            },
+            model: model.to_string(),
+            is_local: true,
+            temperature: 0.1,
+            unreachable_hint: " Make sure Ollama or your local OpenAI-compatible server is running.",
         });
     }
 
@@ -82,7 +109,7 @@ impl LlmClient {
         &self.client
     }
 
-    async fn send_chat(
+    pub(super) async fn send_chat(
         &self,
         url: &str,
         api_key: Option<&str>,
@@ -149,6 +176,8 @@ impl LlmClient {
             temperature: 0.1,
             max_tokens: 5,
             top_p: None,
+            top_k: None,
+            repeat_penalty: None,
             stop: None,
             response_format: None,
         };
@@ -178,7 +207,7 @@ impl LlmClient {
         unreachable_hint: &str,
         timeout_secs: u64,
     ) -> Result<LlmTranslationOutput, (Option<u16>, String)> {
-        let request = OpenAiChatRequest {
+        let mut request = OpenAiChatRequest {
             model: model.to_string(),
             messages: vec![
                 ChatMessage {
@@ -193,13 +222,15 @@ impl LlmClient {
             temperature,
             max_tokens: 8192,
             top_p: None,
+            top_k: None,
+            repeat_penalty: None,
             stop: None,
             response_format: Some(ResponseFormat {
                 r#type: "json_object".to_string(),
             }),
         };
 
-        let chat_response = self
+        let chat_response = match self
             .send_chat(
                 url,
                 api_key,
@@ -208,7 +239,23 @@ impl LlmClient {
                 timeout_secs,
                 &request,
             )
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err((Some(400 | 422), _)) => {
+                request.response_format = None;
+                self.send_chat(
+                    url,
+                    api_key,
+                    label,
+                    unreachable_hint,
+                    timeout_secs,
+                    &request,
+                )
+                .await?
+            }
+            Err(err) => return Err(err),
+        };
         let usage = extract_openai_usage(&chat_response);
         let raw_content = chat_response
             .choices
@@ -255,87 +302,6 @@ impl LlmClient {
             "Connected to {} (model: {}).",
             endpoint.url, endpoint.model
         ))
-    }
-
-    async fn translate_hymt_local(
-        &self,
-        endpoint: &ChatEndpoint,
-        bubbles: &[Bubble],
-        source_lang: &str,
-        target_lang: &str,
-    ) -> Result<LlmTranslationOutput, String> {
-        let mut translations = HashMap::with_capacity(bubbles.len());
-        let mut total_usage = LlmUsageStats::default();
-        let stop_tokens = vec![
-            "<｜hy_end_of_assistant｜>".to_string(),
-            "<｜hy_end_of_sentence｜>".to_string(),
-        ];
-
-        for (index, bubble) in bubbles.iter().enumerate() {
-            let context_start = index.saturating_sub(3);
-            let context_lines: Vec<String> = bubbles[context_start..index]
-                .iter()
-                .map(|b| normalize_bubble_text(&b.source_text))
-                .filter(|text| !text.is_empty())
-                .collect();
-            let context = if context_lines.is_empty() {
-                None
-            } else {
-                Some(context_lines.join("\n"))
-            };
-
-            let prompt = build_hymt_user_prompt(
-                &bubble.source_text,
-                context.as_deref(),
-                source_lang,
-                target_lang,
-            );
-
-            let request = OpenAiChatRequest {
-                model: endpoint.model.clone(),
-                messages: vec![ChatMessage {
-                    role: "user".to_string(),
-                    content: prompt,
-                }],
-                temperature: 0.7,
-                max_tokens: 512,
-                top_p: Some(0.6),
-                stop: Some(stop_tokens.clone()),
-                response_format: None,
-            };
-
-            let response = self
-                .send_chat(
-                    &endpoint.url,
-                    None,
-                    endpoint.label,
-                    endpoint.unreachable_hint,
-                    90,
-                    &request,
-                )
-                .await
-                .map_err(|(_, msg)| msg)?;
-
-            let usage = extract_openai_usage(&response);
-            total_usage.prompt_tokens += usage.prompt_tokens;
-            total_usage.prompt_cached_tokens += usage.prompt_cached_tokens;
-            total_usage.completion_tokens += usage.completion_tokens;
-
-            let raw = response
-                .choices
-                .first()
-                .and_then(|choice| choice.message.content.as_deref())
-                .unwrap_or_default();
-            let translated = strip_hymt_artifacts(raw);
-            if !translated.is_empty() {
-                translations.insert(bubble.id, translated);
-            }
-        }
-
-        Ok(LlmTranslationOutput {
-            translations,
-            usage: total_usage,
-        })
     }
 
     pub async fn translate_chat(

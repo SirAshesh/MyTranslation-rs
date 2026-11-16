@@ -6,13 +6,31 @@ const localStatus = document.getElementById("local-status");
 const localStartBtn = document.getElementById("local-start-btn");
 const localStopBtn = document.getElementById("local-stop-btn");
 
+const GOOGLE_TRANSLATE_MODEL_ID = "google-translate";
 let localPollTimer = null;
 let hardwareModels = [];
 let recommendedLocalQuant = "";
 
+function isGoogleTranslateModel(quant) {
+    return typeof quant === "string" && quant.trim().toLowerCase() === GOOGLE_TRANSLATE_MODEL_ID;
+}
+
+function isGoogleTranslateSelected() {
+    return Boolean(localModelSelect && isGoogleTranslateModel(localModelSelect.value));
+}
+
 function formatLocalOptionName(quant) {
     const match = hardwareModels.find(m => m.quant === quant);
     if (match && match.name) return match.name;
+    if (isGoogleTranslateModel(quant)) {
+        return "Google Translate (Free)";
+    }
+    if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT2-7B-")) {
+        return "Tencent Hy-MT2 7B (" + quant.slice("HY-MT2-7B-".length) + ")";
+    }
+    if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT2-1.8B-")) {
+        return "Tencent Hy-MT2 1.8B (" + quant.slice("HY-MT2-1.8B-".length) + ")";
+    }
     if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT1.5-1.8B-")) {
         return "Tencent HY-MT1.5 1.8B (" + quant.slice("HY-MT1.5-1.8B-".length) + ")";
     }
@@ -21,20 +39,32 @@ function formatLocalOptionName(quant) {
 
 function buildLocalOptionHtml(m) {
     const rec = m.recommended ? " \u2014 Recommended" : "";
-    const gb = (m.size_mb / 1024).toFixed(2);
+    const sizePart = m.size_mb > 0 ? ` (${(m.size_mb / 1024).toFixed(2)} GB)` : "";
     const label = m.name || formatLocalOptionName(m.quant);
-    return `<option value="${escapeHtml(m.quant)}">${escapeHtml(label)} (${gb} GB)${rec}</option>`;
+    return `<option value="${escapeHtml(m.quant)}">${escapeHtml(label)}${sizePart}${rec}</option>`;
 }
 
 function renderLocalModelOptions(models) {
-    const hymt = models.filter(m => m.family === "hy-mt1.5");
-    const lfm3 = models.filter(m => m.family !== "hy-mt1.5");
+    const hymt2_7b = models.filter(m => m.family === "hy-mt2-7b");
+    const hymt2 = models.filter(m => m.family === "hy-mt2");
+    const hymt15 = models.filter(m => m.family === "hy-mt1.5");
+    const lfm3 = models.filter(m => m.family === "lfm3");
+    const online = models.filter(m => m.family === GOOGLE_TRANSLATE_MODEL_ID);
     const sections = [];
-    if (hymt.length > 0) {
-        sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    if (hymt2.length > 0) {
+        sections.push(`<optgroup label="Tencent Hy-MT2 1.8B (Latest generation)">${hymt2.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (hymt2_7b.length > 0) {
+        sections.push(`<optgroup label="Tencent Hy-MT2 7B (Higher quality, 6+ GB VRAM)">${hymt2_7b.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (hymt15.length > 0) {
+        sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt15.map(buildLocalOptionHtml).join("")}</optgroup>`);
     }
     if (lfm3.length > 0) {
         sections.push(`<optgroup label="LiquidAI LFM3 1.7B (General compact LLM)">${lfm3.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (online.length > 0) {
+        sections.push(`<optgroup label="Built-in Online Translator (No download)">${online.map(buildLocalOptionHtml).join("")}</optgroup>`);
     }
     return sections.join("");
 }
@@ -103,6 +133,19 @@ async function pollLocalStatus() {
 
 function updateLocalUi(status) {
     if (!localStatus) return;
+
+    if (isGoogleTranslateSelected()) {
+        if (localProgress) localProgress.hidden = true;
+        localStatus.setAttribute("data-phase", "running");
+        localStatus.textContent = "Ready (Built-in Google Translate, no download needed)";
+        if (localStartBtn) {
+            localStartBtn.disabled = true;
+            localStartBtn.textContent = "No download needed";
+        }
+        if (localStopBtn) localStopBtn.disabled = status.phase !== "running";
+        return;
+    }
+
     localStatus.setAttribute("data-phase", status.phase);
 
     const isInstalled = status.installed_quants && status.installed_quants.includes(localModelSelect ? localModelSelect.value : "");
@@ -156,6 +199,10 @@ function updateLocalUi(status) {
 
 if (localStartBtn) {
     localStartBtn.addEventListener("click", async () => {
+        if (isGoogleTranslateSelected()) {
+            pollLocalStatus();
+            return;
+        }
         localStartBtn.disabled = true;
         localStartBtn.textContent = "Requesting...";
         const quant = (localModelSelect && localModelSelect.value) || recommendedLocalQuant || "HY-MT1.5-1.8B-Q4_K_M";

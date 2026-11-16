@@ -15,7 +15,6 @@ use server_rs::utilities::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 use tracing::{info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -100,7 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let renderer = Arc::new(ComicRenderer::new(font_path)?);
 
     let ocr_mgr = OcrManager::new(51055)?;
-    let ocr = Arc::new(Mutex::new(ocr_mgr));
+    let ocr = Arc::new(ocr_mgr);
 
     let local_data_dir = std::path::Path::new(&config_path)
         .parent()

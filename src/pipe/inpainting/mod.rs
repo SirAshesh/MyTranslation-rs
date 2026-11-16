@@ -13,6 +13,7 @@ use guard::{
     protect_boundary_connected_lineart, rgb_luminance,
 };
 use image::{Rgb, RgbImage};
+use rayon::prelude::*;
 use solver::{
     absorb_contrasting_halo, absorb_contrasting_halo_with_threshold, compute_local_extrema,
     compute_row_ring_bg, diffuse_masked_region, dilate_mask, estimate_dominant_bg, rgb_distance,
@@ -64,11 +65,31 @@ fn point_in_expanded_quad(px: f32, py: f32, quad: &[[f32; 2]; 4], pad: f32) -> b
 
 pub fn clean_image_text(img: &mut RgbImage, bubbles: &[Bubble]) {
     let (width, height) = (img.width(), img.height());
-    for bubble in bubbles {
-        if bubble.lines.is_empty() {
-            continue;
+    let cleaned_rois: Vec<(RoiBuffers, Vec<bool>)> = bubbles
+        .par_iter()
+        .filter(|b| !b.lines.is_empty())
+        .filter_map(|b| compute_cleaned_bubble(img, b, width, height))
+        .collect();
+
+    for (roi, final_mask) in cleaned_rois {
+        for dy in 0..roi.h {
+            let y = roi.y1 + dy as u32;
+            for dx in 0..roi.w {
+                let idx = dy * roi.w + dx;
+                if final_mask[idx] {
+                    let x = roi.x1 + dx as u32;
+                    img.put_pixel(
+                        x,
+                        y,
+                        Rgb([
+                            roi.r[idx].round().clamp(0.0, 255.0) as u8,
+                            roi.g[idx].round().clamp(0.0, 255.0) as u8,
+                            roi.b[idx].round().clamp(0.0, 255.0) as u8,
+                        ]),
+                    );
+                }
+            }
         }
-        clean_bubble_region(img, bubble, width, height);
     }
 }
 
@@ -295,39 +316,46 @@ fn add_interior_cleanup_mask(
     }
 }
 
-fn clean_bubble_region(img: &mut RgbImage, bubble: &Bubble, img_w: u32, img_h: u32) {
-    let mut roi = match RoiBuffers::from_image(img, bubble, img_w, img_h) {
-        Some(buf) => buf,
-        None => return,
-    };
+fn compute_cleaned_bubble(
+    img: &RgbImage,
+    bubble: &Bubble,
+    img_w: u32,
+    img_h: u32,
+) -> Option<(RoiBuffers, Vec<bool>)> {
+    let mut roi = RoiBuffers::from_image(img, bubble, img_w, img_h)?;
 
     let len = roi.w * roi.h;
     let mut any_allow = vec![false; len];
     let mut any_outer = vec![false; len];
 
-    for dy in 0..roi.h {
-        let py = (roi.y1 + dy as u32) as f32 + 0.5;
-        for dx in 0..roi.w {
-            let px = (roi.x1 + dx as u32) as f32 + 0.5;
-            let idx = dy * roi.w + dx;
-            for line in &bubble.lines {
-                if is_interior_cleanup_line(line) {
-                    continue;
-                }
-                if point_in_expanded_quad(px, py, &line.quad, ALLOW_PAD_ARTWORK) {
-                    any_allow[idx] = true;
-                }
-                if point_in_expanded_quad(px, py, &line.quad, RING_OUTER_PAD) {
-                    any_outer[idx] = true;
+    let mut line_bounds = Vec::with_capacity(bubble.lines.len());
+    for line in &bubble.lines {
+        let bounds = line_roi_bounds(line, &roi, RING_OUTER_PAD);
+        if !is_interior_cleanup_line(line) {
+            let (lx1, ly1, lx2, ly2) = bounds;
+            for dy in ly1..=ly2 {
+                let py = (roi.y1 + dy as u32) as f32 + 0.5;
+                for dx in lx1..=lx2 {
+                    let px = (roi.x1 + dx as u32) as f32 + 0.5;
+                    let idx = dy * roi.w + dx;
+                    if !any_allow[idx]
+                        && point_in_expanded_quad(px, py, &line.quad, ALLOW_PAD_ARTWORK)
+                    {
+                        any_allow[idx] = true;
+                        any_outer[idx] = true;
+                    } else if !any_outer[idx]
+                        && point_in_expanded_quad(px, py, &line.quad, RING_OUTER_PAD)
+                    {
+                        any_outer[idx] = true;
+                    }
                 }
             }
         }
+        line_bounds.push(bounds);
     }
 
-    let mut line_bounds = Vec::with_capacity(bubble.lines.len());
     let mut line_backgrounds = Vec::with_capacity(bubble.lines.len());
-    for line in &bubble.lines {
-        let bounds = line_roi_bounds(line, &roi, RING_OUTER_PAD);
+    for (line, &bounds) in bubble.lines.iter().zip(line_bounds.iter()) {
         let bg = if is_interior_cleanup_line(line) {
             None
         } else {
@@ -335,7 +363,6 @@ fn clean_bubble_region(img: &mut RgbImage, bubble: &Bubble, img_w: u32, img_h: u
                 &roi, line, &any_allow, bounds.0, bounds.1, bounds.2, bounds.3,
             )
         };
-        line_bounds.push(bounds);
         line_backgrounds.push(bg);
     }
     let any_core = build_any_core_mask(&roi, &bubble.lines, &line_backgrounds);
@@ -546,24 +573,8 @@ fn clean_bubble_region(img: &mut RgbImage, bubble: &Bubble, img_w: u32, img_h: u
 
     if final_mask.iter().any(|&m| m) {
         diffuse_masked_region(&final_mask, &protected_lineart, &solid_bg, &mut roi, 90);
-    }
-
-    for dy in 0..roi.h {
-        let y = roi.y1 + dy as u32;
-        for dx in 0..roi.w {
-            let idx = dy * roi.w + dx;
-            if final_mask[idx] {
-                let x = roi.x1 + dx as u32;
-                img.put_pixel(
-                    x,
-                    y,
-                    Rgb([
-                        roi.r[idx].round().clamp(0.0, 255.0) as u8,
-                        roi.g[idx].round().clamp(0.0, 255.0) as u8,
-                        roi.b[idx].round().clamp(0.0, 255.0) as u8,
-                    ]),
-                );
-            }
-        }
+        Some((roi, final_mask))
+    } else {
+        None
     }
 }

@@ -74,6 +74,20 @@ pub fn resolve_claude_models_url(base: &str) -> String {
     replace_endpoint_suffix(&resolve_claude_url(trimmed), "/messages", "/models")
 }
 
+pub fn resolve_ollama_tags_url(base: &str) -> String {
+    let mut root = base.trim().trim_end_matches('/');
+    for suffix in ["/v1/chat/completions", "/v1/models", "/chat/completions", "/models", "/v1"] {
+        if let Some(stripped) = root.strip_suffix(suffix) {
+            root = stripped.trim_end_matches('/');
+            break;
+        }
+    }
+    if root.is_empty() {
+        return "http://127.0.0.1:11434/api/tags".to_string();
+    }
+    format!("{}/api/tags", root)
+}
+
 pub fn is_loopback_url(url: &str) -> bool {
     let without_scheme = url
         .trim()

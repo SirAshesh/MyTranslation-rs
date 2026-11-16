@@ -19,3 +19,4 @@ src/frontend/free
 src/pipe/free_mode
 storage.db
 storage.db-*
+tests

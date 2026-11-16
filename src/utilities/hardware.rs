@@ -1,6 +1,6 @@
 use crate::model::{
     CpuInfo, EngineBackend, GpuInfo, HardwareResponse, LocalModelFamily, LocalModelOption,
-    LocalModelSpec, LOCAL_MODEL_CATALOG,
+    LocalModelSpec, GOOGLE_TRANSLATE_MODEL_ID, LOCAL_MODEL_CATALOG,
 };
 use std::process::Command;
 use std::sync::RwLock;
@@ -239,7 +239,7 @@ fn build_model_options(
 ) -> Vec<LocalModelOption> {
     let recommended_quant = pick_recommended_quant(backend, vram_mb, ram_gb);
 
-    LOCAL_MODEL_CATALOG
+    let mut options: Vec<LocalModelOption> = LOCAL_MODEL_CATALOG
         .iter()
         .map(|spec| LocalModelOption {
             quant: spec.quant.to_string(),
@@ -248,7 +248,17 @@ fn build_model_options(
             size_mb: spec.size_bytes / (1024 * 1024),
             recommended: Some(spec.quant) == recommended_quant,
         })
-        .collect()
+        .collect();
+
+    options.push(LocalModelOption {
+        quant: GOOGLE_TRANSLATE_MODEL_ID.to_string(),
+        family: GOOGLE_TRANSLATE_MODEL_ID.to_string(),
+        name: "Google Translate (Free, No Download)".to_string(),
+        size_mb: 0,
+        recommended: false,
+    });
+
+    options
 }
 
 pub fn recommended_local_model() -> Option<String> {
@@ -327,6 +337,19 @@ mod tests {
         assert_eq!(
             recommended_quant(&build_model_options(EngineBackend::Cpu, 0, 16.0)),
             Some("HY-MT1.5-1.8B-Q8_0")
+        );
+        let options = build_model_options(EngineBackend::Cpu, 0, 16.0);
+        assert!(options.iter().any(|o| o.quant == GOOGLE_TRANSLATE_MODEL_ID && !o.recommended));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q4_K_M" && o.family == "hy-mt2"));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q8_0" && o.family == "hy-mt2"));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-7B-Q4_K_M" && o.family == "hy-mt2-7b"));
+        assert!(options.iter().any(|o| o.quant == "HY-MT2-7B-Q8_0" && o.family == "hy-mt2-7b"));
+        assert!(crate::model::is_hymt_model("Hy-MT2-1.8B-Q4_K_M"));
+        assert!(crate::model::is_hymt_model("Hy-MT2-7B-Q4_K_M"));
+        assert!(crate::model::is_hymt_model("hf.co/tencent/Hy-MT2-7B-GGUF"));
+        assert_eq!(
+            crate::utilities::resolve_ollama_tags_url("http://127.0.0.1:11434/v1"),
+            "http://127.0.0.1:11434/api/tags"
         );
     }
 }

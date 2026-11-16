@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const LOCAL_SERVER_PORT: u16 = 51057;
 pub const DEFAULT_LOCAL_QUANT: &str = "HY-MT1.5-1.8B-Q4_K_M";
+pub const GOOGLE_TRANSLATE_MODEL_ID: &str = "google-translate";
 
 pub fn local_server_url() -> String {
     format!("http://127.0.0.1:{}/v1", LOCAL_SERVER_PORT)
@@ -10,6 +11,8 @@ pub fn local_server_url() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalModelFamily {
     HyMt15,
+    HyMt2,
+    HyMt2_7B,
     Lfm3,
 }
 
@@ -17,8 +20,17 @@ impl LocalModelFamily {
     pub fn key(self) -> &'static str {
         match self {
             LocalModelFamily::HyMt15 => "hy-mt1.5",
+            LocalModelFamily::HyMt2 => "hy-mt2",
+            LocalModelFamily::HyMt2_7B => "hy-mt2-7b",
             LocalModelFamily::Lfm3 => "lfm3",
         }
+    }
+
+    pub fn is_hymt(self) -> bool {
+        matches!(
+            self,
+            LocalModelFamily::HyMt15 | LocalModelFamily::HyMt2 | LocalModelFamily::HyMt2_7B
+        )
     }
 }
 
@@ -53,7 +65,73 @@ impl LocalModelSpec {
     }
 }
 
-pub const LOCAL_MODEL_CATALOG: [LocalModelSpec; 6] = [
+pub const LOCAL_MODEL_CATALOG: [LocalModelSpec; 12] = [
+    LocalModelSpec {
+        quant: "Hy-MT2-1.8B-Q4_K_M",
+        family: LocalModelFamily::HyMt2,
+        display_name: "Tencent Hy-MT2 1.8B",
+        quant_label: "Q4_K_M",
+        repository: "tencent/Hy-MT2-1.8B-GGUF",
+        file_name: "Hy-MT2-1.8B-Q4_K_M.gguf",
+        size_bytes: 1_133_080_448,
+        min_vram_mb: 0,
+        min_ram_gb: 0.0,
+    },
+    LocalModelSpec {
+        quant: "Hy-MT2-1.8B-Q6_K",
+        family: LocalModelFamily::HyMt2,
+        display_name: "Tencent Hy-MT2 1.8B",
+        quant_label: "Q6_K",
+        repository: "tencent/Hy-MT2-1.8B-GGUF",
+        file_name: "Hy-MT2-1.8B-Q6_K.gguf",
+        size_bytes: 1_474_785_120,
+        min_vram_mb: 2048,
+        min_ram_gb: 10.0,
+    },
+    LocalModelSpec {
+        quant: "Hy-MT2-1.8B-Q8_0",
+        family: LocalModelFamily::HyMt2,
+        display_name: "Tencent Hy-MT2 1.8B",
+        quant_label: "Q8_0",
+        repository: "tencent/Hy-MT2-1.8B-GGUF",
+        file_name: "Hy-MT2-1.8B-Q8_0.gguf",
+        size_bytes: 1_908_528_192,
+        min_vram_mb: 4096,
+        min_ram_gb: 14.0,
+    },
+    LocalModelSpec {
+        quant: "Hy-MT2-7B-Q4_K_M",
+        family: LocalModelFamily::HyMt2_7B,
+        display_name: "Tencent Hy-MT2 7B",
+        quant_label: "Q4_K_M",
+        repository: "tencent/Hy-MT2-7B-GGUF",
+        file_name: "Hy-MT2-7B-Q4_K_M.gguf",
+        size_bytes: 4_624_648_896,
+        min_vram_mb: 6144,
+        min_ram_gb: 8.0,
+    },
+    LocalModelSpec {
+        quant: "HY-MT2-7B-Q6_K",
+        family: LocalModelFamily::HyMt2_7B,
+        display_name: "Tencent Hy-MT2 7B",
+        quant_label: "Q6_K",
+        repository: "tencent/Hy-MT2-7B-GGUF",
+        file_name: "HY-MT2-7B-Q6_K.gguf",
+        size_bytes: 6_164_482_720,
+        min_vram_mb: 8192,
+        min_ram_gb: 10.0,
+    },
+    LocalModelSpec {
+        quant: "HY-MT2-7B-Q8_0",
+        family: LocalModelFamily::HyMt2_7B,
+        display_name: "Tencent Hy-MT2 7B",
+        quant_label: "Q8_0",
+        repository: "tencent/Hy-MT2-7B-GGUF",
+        file_name: "HY-MT2-7B-Q8_0.gguf",
+        size_bytes: 7_981_928_896,
+        min_vram_mb: 10240,
+        min_ram_gb: 12.0,
+    },
     LocalModelSpec {
         quant: "HY-MT1.5-1.8B-Q4_K_M",
         family: LocalModelFamily::HyMt15,
@@ -131,12 +209,20 @@ pub fn find_local_model(quant: &str) -> Option<&'static LocalModelSpec> {
 
 pub fn is_hymt_model(model_id: &str) -> bool {
     if let Some(spec) = find_local_model(model_id) {
-        return spec.family == LocalModelFamily::HyMt15;
+        return spec.family.is_hymt();
     }
-    model_id.trim().to_ascii_lowercase().starts_with("hy-mt")
+    let lower = model_id.trim().to_ascii_lowercase();
+    lower.starts_with("hy-mt") || lower.contains("/hy-mt") || lower.contains("hy-mt2")
+}
+
+pub fn is_google_translate_model(model_id: &str) -> bool {
+    model_id.trim().eq_ignore_ascii_case(GOOGLE_TRANSLATE_MODEL_ID)
 }
 
 pub fn format_local_model_label(model_id: &str) -> String {
+    if is_google_translate_model(model_id) {
+        return "Google Translate (Free)".to_string();
+    }
     match find_local_model(model_id) {
         Some(spec) => spec.label(),
         None => format!("Local ({})", model_id.trim()),

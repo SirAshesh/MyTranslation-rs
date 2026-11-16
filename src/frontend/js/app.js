@@ -12,7 +12,8 @@ const modeSections = {
     general: document.getElementById("section-general"),
     openai: document.getElementById("section-openai"),
     claude: document.getElementById("section-claude"),
-    local: document.getElementById("section-local")
+    local: document.getElementById("section-local"),
+    byom: document.getElementById("section-byom")
 };
 
 let activeSettingsTab = "general";
@@ -54,6 +55,11 @@ const claudeUrlInput = document.getElementById("claude-url");
 const claudeModelInput = document.getElementById("claude-model");
 const claudeKeyInput = document.getElementById("claude-key");
 const toggleClaudeKeyBtn = document.getElementById("toggle-claude-key");
+
+const byomUrlInput = document.getElementById("byom-url");
+const byomModelInput = document.getElementById("byom-model");
+const byomKeyInput = document.getElementById("byom-key");
+const toggleByomKeyBtn = document.getElementById("toggle-byom-key");
 
 let savedLocalModel = "";
 const localModelSelect = document.getElementById("local-model");
@@ -198,6 +204,9 @@ function bindPasswordToggle(btn, input) {
 
 bindPasswordToggle(toggleOpenaiKeyBtn, openaiKeyInput);
 bindPasswordToggle(toggleClaudeKeyBtn, claudeKeyInput);
+if (toggleByomKeyBtn && byomKeyInput) {
+    bindPasswordToggle(toggleByomKeyBtn, byomKeyInput);
+}
 
 copyUrlBtn.addEventListener("click", async () => {
     const urlText = serverUrlCode.textContent.trim();
@@ -215,6 +224,7 @@ copyUrlBtn.addEventListener("click", async () => {
 function formatModeName(mode) {
     if (mode === "claude") return "Claude Compatible Endpoint";
     if (mode === "local") return "Local Model (LFM / GGUF)";
+    if (mode === "byom") return "BYOM (Ollama / Custom Host)";
     if (mode === "free") return "Free-Tier LLM API";
     return "OpenAI Compatible Endpoint";
 }
@@ -286,7 +296,7 @@ async function loadRuntimeState(announce) {
 
         let mode = s.translation_mode || "openai";
         const supportsFreeMode = Boolean(window.freeModeHandlers);
-        if (mode !== "claude" && mode !== "openai" && mode !== "local" && !(supportsFreeMode && mode === "free")) {
+        if (mode !== "claude" && mode !== "openai" && mode !== "local" && mode !== "byom" && !(supportsFreeMode && mode === "free")) {
             mode = "openai";
         }
         selectMode(mode, false);
@@ -303,6 +313,16 @@ async function loadRuntimeState(announce) {
         claudeModelInput.value = s.claude_model || "claude-3-5-sonnet-latest";
         claudeKeyInput.placeholder = s.claude_key_configured ? "Saved (" + s.claude_masked_key + ")" : "Enter sk-ant-...";
 
+        if (byomUrlInput) {
+            byomUrlInput.value = s.byom_base_url || "http://127.0.0.1:11434";
+        }
+        if (byomModelInput) {
+            byomModelInput.value = s.byom_model || "";
+        }
+        if (byomKeyInput) {
+            byomKeyInput.placeholder = s.byom_key_configured ? "Saved (" + s.byom_masked_key + ")" : "Optional (not needed for Ollama)";
+        }
+
         if (supportsFreeMode) {
             window.freeModeHandlers.applyState(s);
         }
@@ -311,6 +331,9 @@ async function loadRuntimeState(announce) {
             savedLocalModel = s.local_model;
             if (localModelSelect && Array.from(localModelSelect.options).some(o => o.value === s.local_model)) {
                 localModelSelect.value = s.local_model;
+            }
+            if (typeof pollLocalStatus === "function") {
+                pollLocalStatus();
             }
         }
 
@@ -324,7 +347,11 @@ async function loadRuntimeState(announce) {
                 ? formatLocalOptionName(localId)
                 : localId;
             statModel.textContent = activeModelName;
-            statKey.textContent = "Offline (Local)";
+            statKey.textContent = localId === "google-translate" ? "Free (No API Key)" : "Offline (Local)";
+        } else if (mode === "byom") {
+            activeModelName = s.byom_model || "Not selected";
+            statModel.textContent = activeModelName;
+            statKey.textContent = s.byom_key_configured ? s.byom_masked_key : "Optional (Local Host)";
         } else if (mode === "free" && supportsFreeMode) {
             const summary = window.freeModeHandlers.getSummary(s);
             activeModelName = summary.modelName;
@@ -345,7 +372,9 @@ async function loadRuntimeState(announce) {
         } else {
             const emptyText = mode === "local"
                 ? "Local model server is stopped. Click Download & start in the Local Model tab."
-                : "Active mode (" + formatModeName(mode) + ") has no API key saved in config.json. Configure it in Settings.";
+                : mode === "byom"
+                    ? "Configure your Ollama / custom host URL and model ID in Settings > BYOM (Ollama)."
+                    : "Active mode (" + formatModeName(mode) + ") has no API key saved in config.json. Configure it in Settings.";
             setBanner(homeStatusBox, "warn", "EMPTY", emptyText);
             if (settingsStatusBox.getAttribute("data-state") === "loading") {
                 setBanner(settingsStatusBox, "warn", "EMPTY", emptyText);
@@ -377,6 +406,9 @@ settingsForm.addEventListener("submit", async (e) => {
         claude_model: claudeModelInput.value.trim(),
         claude_api_key: claudeKeyInput.value.trim(),
         local_model: localModelSelect ? localModelSelect.value : savedLocalModel,
+        byom_base_url: byomUrlInput ? byomUrlInput.value.trim() : "http://127.0.0.1:11434",
+        byom_model: byomModelInput ? byomModelInput.value.trim() : "",
+        byom_api_key: byomKeyInput ? byomKeyInput.value.trim() : "",
         disable_batch_endpoint: generalDisableBatchInput ? generalDisableBatchInput.checked : false,
         enable_queue: generalEnableQueueInput ? generalEnableQueueInput.checked : false,
         queue_max_concurrent: parseBoundedInt(generalQueueMaxInput, 10, 1, 100),
@@ -400,6 +432,7 @@ settingsForm.addEventListener("submit", async (e) => {
         if (data.success) {
             openaiKeyInput.value = "";
             claudeKeyInput.value = "";
+            if (byomKeyInput) byomKeyInput.value = "";
             if (window.freeModeHandlers && window.freeModeHandlers.clearKeyInputs) {
                 window.freeModeHandlers.clearKeyInputs();
             }
@@ -429,7 +462,10 @@ testBtn.addEventListener("click", async () => {
         claude_base_url: claudeUrlInput.value.trim(),
         claude_model: claudeModelInput.value.trim(),
         claude_api_key: claudeKeyInput.value.trim(),
-        local_model: localModelSelect ? localModelSelect.value : savedLocalModel
+        local_model: localModelSelect ? localModelSelect.value : savedLocalModel,
+        byom_base_url: byomUrlInput ? byomUrlInput.value.trim() : "http://127.0.0.1:11434",
+        byom_model: byomModelInput ? byomModelInput.value.trim() : "",
+        byom_api_key: byomKeyInput ? byomKeyInput.value.trim() : ""
     }, window.freeModeHandlers ? window.freeModeHandlers.buildPayload() : {});
 
     try {

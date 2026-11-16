@@ -1,3 +1,4 @@
+use crate::model::Bubble;
 use image::{Rgb, RgbImage};
 
 pub(super) fn pixel_distance(px: &Rgb<u8>, bg: [f32; 3]) -> f32 {
@@ -192,4 +193,40 @@ pub(super) fn detect_vertical_bubble_bounds(
         return None;
     }
     Some((max_top_border_y, min_bot_border_y))
+}
+
+pub(super) fn clamp_bounds_against_neighbors(
+    target: &Bubble,
+    all_bubbles: &[Bubble],
+    left_limit: &mut f32,
+    right_limit: &mut f32,
+    top_limit: &mut f32,
+    bot_limit: &mut f32,
+) {
+    for other in all_bubbles {
+        if other.id == target.id {
+            continue;
+        }
+        let y_overlap = (other.y1 - 8.0) < target.y2 && (other.y2 + 8.0) > target.y1;
+        if y_overlap {
+            if other.x1 >= target.x2 - 8.0 {
+                let mid = (target.x2 + other.x1) * 0.5;
+                *right_limit = (*right_limit).min((mid - 2.0).max(target.x2));
+            } else if other.x2 <= target.x1 + 8.0 {
+                let mid = (other.x2 + target.x1) * 0.5;
+                *left_limit = (*left_limit).max((mid + 2.0).min(target.x1));
+            }
+        }
+
+        let x_overlap = (other.x1 - 8.0) < target.x2 && (other.x2 + 8.0) > target.x1;
+        if x_overlap {
+            if other.y1 >= target.y2 - 8.0 {
+                let mid = (target.y2 + other.y1) * 0.5;
+                *bot_limit = (*bot_limit).min((mid - 2.0).max(target.y2));
+            } else if other.y2 <= target.y1 + 8.0 {
+                let mid = (other.y2 + target.y1) * 0.5;
+                *top_limit = (*top_limit).max((mid + 2.0).min(target.y1));
+            }
+        }
+    }
 }
