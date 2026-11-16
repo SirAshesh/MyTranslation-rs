@@ -340,5 +340,8 @@ mod tests {
         );
         let options = build_model_options(EngineBackend::Cpu, 0, 16.0);
         assert!(options.iter().any(|o| o.quant == GOOGLE_TRANSLATE_MODEL_ID && !o.recommended));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q4_K_M" && o.family == "hy-mt2"));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q8_0" && o.family == "hy-mt2"));
+        assert!(crate::model::is_hymt_model("Hy-MT2-1.8B-Q4_K_M"));
     }
 }

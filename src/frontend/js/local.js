@@ -25,6 +25,9 @@ function formatLocalOptionName(quant) {
     if (isGoogleTranslateModel(quant)) {
         return "Google Translate (Free)";
     }
+    if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT2-1.8B-")) {
+        return "Tencent Hy-MT2 1.8B (" + quant.slice("HY-MT2-1.8B-".length) + ")";
+    }
     if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT1.5-1.8B-")) {
         return "Tencent HY-MT1.5 1.8B (" + quant.slice("HY-MT1.5-1.8B-".length) + ")";
     }
@@ -39,12 +42,16 @@ function buildLocalOptionHtml(m) {
 }
 
 function renderLocalModelOptions(models) {
-    const hymt = models.filter(m => m.family === "hy-mt1.5");
+    const hymt2 = models.filter(m => m.family === "hy-mt2");
+    const hymt15 = models.filter(m => m.family === "hy-mt1.5");
     const lfm3 = models.filter(m => m.family === "lfm3");
     const online = models.filter(m => m.family === GOOGLE_TRANSLATE_MODEL_ID);
     const sections = [];
-    if (hymt.length > 0) {
-        sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    if (hymt2.length > 0) {
+        sections.push(`<optgroup label="Tencent Hy-MT2 1.8B (Latest generation)">${hymt2.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (hymt15.length > 0) {
+        sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt15.map(buildLocalOptionHtml).join("")}</optgroup>`);
     }
     if (lfm3.length > 0) {
         sections.push(`<optgroup label="LiquidAI LFM3 1.7B (General compact LLM)">${lfm3.map(buildLocalOptionHtml).join("")}</optgroup>`);

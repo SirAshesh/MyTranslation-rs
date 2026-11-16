@@ -439,6 +439,9 @@ pub fn strip_hymt_artifacts(raw: &str) -> String {
     for token in [
         "<｜hy_end_of_assistant｜>",
         "<｜hy_end_of_sentence｜>",
+        "<｜hy_place▁holder▁no▁2｜>",
+        "<｜hy_place▁holder▁no▁3｜>",
+        "<｜hy_place▁holder▁no▁8｜>",
         "<｜hy_Assistant｜>",
         "<｜hy_begin▁of▁sentence｜>",
         "<｜hy_User｜>",
@@ -535,5 +538,8 @@ mod tests {
 
         let stripped = strip_hymt_artifacts("Ikuti aku!<｜hy_end_of_assistant｜>");
         assert_eq!(stripped, "Ikuti aku!");
+
+        let stripped_v2 = strip_hymt_artifacts("Ayo pergi!<｜hy_place▁holder▁no▁2｜>");
+        assert_eq!(stripped_v2, "Ayo pergi!");
     }
 }

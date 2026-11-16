@@ -273,6 +273,7 @@ impl LlmClient {
         let stop_tokens = vec![
             "<｜hy_end_of_assistant｜>".to_string(),
             "<｜hy_end_of_sentence｜>".to_string(),
+            "<｜hy_place▁holder▁no▁2｜>".to_string(),
         ];
 
         for (index, bubble) in bubbles.iter().enumerate() {
