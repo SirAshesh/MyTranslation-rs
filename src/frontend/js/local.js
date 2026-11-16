@@ -25,6 +25,9 @@ function formatLocalOptionName(quant) {
     if (isGoogleTranslateModel(quant)) {
         return "Google Translate (Free)";
     }
+    if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT2-7B-")) {
+        return "Tencent Hy-MT2 7B (" + quant.slice("HY-MT2-7B-".length) + ")";
+    }
     if (typeof quant === "string" && quant.toUpperCase().startsWith("HY-MT2-1.8B-")) {
         return "Tencent Hy-MT2 1.8B (" + quant.slice("HY-MT2-1.8B-".length) + ")";
     }
@@ -42,6 +45,7 @@ function buildLocalOptionHtml(m) {
 }
 
 function renderLocalModelOptions(models) {
+    const hymt2_7b = models.filter(m => m.family === "hy-mt2-7b");
     const hymt2 = models.filter(m => m.family === "hy-mt2");
     const hymt15 = models.filter(m => m.family === "hy-mt1.5");
     const lfm3 = models.filter(m => m.family === "lfm3");
@@ -49,6 +53,9 @@ function renderLocalModelOptions(models) {
     const sections = [];
     if (hymt2.length > 0) {
         sections.push(`<optgroup label="Tencent Hy-MT2 1.8B (Latest generation)">${hymt2.map(buildLocalOptionHtml).join("")}</optgroup>`);
+    }
+    if (hymt2_7b.length > 0) {
+        sections.push(`<optgroup label="Tencent Hy-MT2 7B (Higher quality, 6+ GB VRAM)">${hymt2_7b.map(buildLocalOptionHtml).join("")}</optgroup>`);
     }
     if (hymt15.length > 0) {
         sections.push(`<optgroup label="Tencent HY-MT1.5 1.8B (Recommended for translation)">${hymt15.map(buildLocalOptionHtml).join("")}</optgroup>`);

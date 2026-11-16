@@ -10,7 +10,24 @@ pub(crate) struct OpenAiModelsListResponse {
 
 #[derive(Deserialize)]
 pub(crate) struct OpenAiModelEntry {
+    #[serde(default)]
     pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) model: String,
+}
+
+impl OpenAiModelEntry {
+    fn resolved_name(self) -> String {
+        if !self.id.trim().is_empty() {
+            self.id
+        } else if !self.name.trim().is_empty() {
+            self.name
+        } else {
+            self.model
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -35,7 +52,7 @@ pub(crate) fn parse_models_list_json(raw: &str, label: &str) -> Result<Vec<Strin
     if let Ok(list) = serde_json::from_str::<OpenAiModelsListResponse>(raw) {
         if !list.data.is_empty() {
             return Ok(collect_unique_model_ids(
-                list.data.into_iter().map(|entry| entry.id),
+                list.data.into_iter().map(OpenAiModelEntry::resolved_name),
             ));
         }
         if raw.contains("\"data\"") {
@@ -45,13 +62,13 @@ pub(crate) fn parse_models_list_json(raw: &str, label: &str) -> Result<Vec<Strin
 
     if let Ok(entries) = serde_json::from_str::<Vec<OpenAiModelEntry>>(raw) {
         return Ok(collect_unique_model_ids(
-            entries.into_iter().map(|entry| entry.id),
+            entries.into_iter().map(OpenAiModelEntry::resolved_name),
         ));
     }
 
     if let Ok(wrapped) = serde_json::from_str::<WrappedModelsListResponse>(raw) {
         return Ok(collect_unique_model_ids(
-            wrapped.models.into_iter().map(|entry| entry.id),
+            wrapped.models.into_iter().map(OpenAiModelEntry::resolved_name),
         ));
     }
 
@@ -460,6 +477,10 @@ mod tests {
         assert!(parse_models_list_json(empty_data, "OpenAI")
             .expect("parse empty")
             .is_empty());
+
+        let ollama_tags = r#"{"models":[{"name":"qwen2.5:7b","model":"qwen2.5:7b"},{"name":"translategemma:4b"}]}"#;
+        let ollama_ids = parse_models_list_json(ollama_tags, "BYOM / Ollama").expect("parse ollama tags");
+        assert_eq!(ollama_ids, vec!["qwen2.5:7b", "translategemma:4b"]);
     }
 
     #[test]

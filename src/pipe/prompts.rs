@@ -445,6 +445,10 @@ pub fn strip_hymt_artifacts(raw: &str) -> String {
         "<｜hy_Assistant｜>",
         "<｜hy_begin▁of▁sentence｜>",
         "<｜hy_User｜>",
+        "<|startoftext|>",
+        "<|extra_0|>",
+        "<|extra_4|>",
+        "<|eos|>",
         "</s>",
     ] {
         cleaned = cleaned.replace(token, "");
@@ -541,5 +545,8 @@ mod tests {
 
         let stripped_v2 = strip_hymt_artifacts("Ayo pergi!<｜hy_place▁holder▁no▁2｜>");
         assert_eq!(stripped_v2, "Ayo pergi!");
+
+        let stripped_v2_7b = strip_hymt_artifacts("Jangan lupa ya!<|eos|>");
+        assert_eq!(stripped_v2_7b, "Jangan lupa ya!");
     }
 }

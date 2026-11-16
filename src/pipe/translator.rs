@@ -9,8 +9,8 @@ use crate::model::{
     SaveSettingsForm, TestKeyRequest,
 };
 use crate::utilities::{
-    is_loopback_url, redact_secrets, resolve_claude_models_url, resolve_openai_models_url,
-    LlmUsageStats,
+    is_loopback_url, redact_secrets, resolve_claude_models_url, resolve_ollama_tags_url,
+    resolve_openai_models_url, LlmUsageStats,
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -63,6 +63,7 @@ fn cache_namespace(cfg: &AppConfig, source_lang: &str, target_lang: &str) -> Str
     let model = match cfg.translation_mode.as_str() {
         "claude" => cfg.claude_model.trim(),
         "local" => cfg.local_model.trim(),
+        "byom" => cfg.byom_model.trim(),
         #[cfg(feature = "free-mode")]
         "free" => cfg.free.free_provider.trim(),
         _ => cfg.openai_model.trim(),
@@ -106,7 +107,7 @@ impl Translator {
         let mut guard = self.config.write().await;
         let cfg = &mut *guard;
         let mode = form.translation_mode.trim().to_lowercase();
-        let is_valid_mode = matches!(mode.as_str(), "openai" | "claude" | "local")
+        let is_valid_mode = matches!(mode.as_str(), "openai" | "claude" | "local" | "byom")
             || (cfg!(feature = "free-mode") && mode == "free");
         if is_valid_mode {
             cfg.translation_mode = mode;
@@ -120,6 +121,9 @@ impl Translator {
             (&form.claude_model, &mut cfg.claude_model),
             (&form.claude_api_key, &mut cfg.claude_api_key),
             (&form.local_model, &mut cfg.local_model),
+            (&form.byom_base_url, &mut cfg.byom_base_url),
+            (&form.byom_model, &mut cfg.byom_model),
+            (&form.byom_api_key, &mut cfg.byom_api_key),
         ];
         for (submitted, stored) in text_settings {
             if !submitted.trim().is_empty() {
@@ -160,6 +164,7 @@ impl Translator {
             "local" => {
                 is_google_translate_model(&cfg.local_model) || self.runtime.is_running().await
             }
+            "byom" => !cfg.byom_base_url.trim().is_empty() && !cfg.byom_model.trim().is_empty(),
             #[cfg(feature = "free-mode")]
             "free" => cfg.free.is_configured(),
             _ => !cfg.deepseek_api_key.trim().is_empty(),
@@ -178,6 +183,9 @@ impl Translator {
             (&req.claude_model, &mut temp_cfg.claude_model),
             (&req.claude_api_key, &mut temp_cfg.claude_api_key),
             (&req.local_model, &mut temp_cfg.local_model),
+            (&req.byom_base_url, &mut temp_cfg.byom_base_url),
+            (&req.byom_model, &mut temp_cfg.byom_model),
+            (&req.byom_api_key, &mut temp_cfg.byom_api_key),
         ];
         for (submitted, stored) in overrides {
             if !submitted.trim().is_empty() {
@@ -220,6 +228,7 @@ impl Translator {
         match cfg.translation_mode.as_str() {
             "claude" => format!("Claude ({})", cfg.claude_model),
             "local" => format_local_model_label(&cfg.local_model),
+            "byom" => format!("BYOM ({})", cfg.byom_model),
             #[cfg(feature = "free-mode")]
             "free" => self
                 .free_active_summary(&cfg)
@@ -250,57 +259,33 @@ impl Translator {
         .await
     }
 
-    pub async fn fetch_endpoint_models(
+    async fn request_models_url(
         &self,
-        req: &ProviderModelsRequest,
+        url: &str,
+        label: &str,
+        effective_key: &str,
+        is_claude: bool,
     ) -> Result<Vec<String>, String> {
-        let cfg = self.get_config().await;
-        let mode = req.mode.trim().to_ascii_lowercase();
-        let (label, url, effective_key, is_claude) = match mode.as_str() {
-            "claude" => {
-                let key = first_non_empty(&req.api_key, &cfg.claude_api_key);
-                if key.is_empty() {
-                    return Err("Enter a Claude API key before fetching models.".to_string());
-                }
-                let base = first_non_empty(&req.base_url, &cfg.claude_base_url);
-                ("Claude", resolve_claude_models_url(&base), key, true)
-            }
-            "openai" => {
-                let key = first_non_empty(&req.api_key, &cfg.deepseek_api_key);
-                let base = first_non_empty(&req.base_url, &cfg.openai_base_url);
-                let resolved_url = resolve_openai_models_url(&base);
-                if key.is_empty() && !is_loopback_url(&resolved_url) {
-                    return Err(
-                        "Enter an OpenAI-compatible API key before fetching models.".to_string(),
-                    );
-                }
-                ("OpenAI-compatible", resolved_url, key, false)
-            }
-            other => {
-                return Err(format!("Unsupported model lookup mode '{}'.", other));
-            }
-        };
-
         let mut builder = self
             .client
             .http_client()
-            .get(&url)
+            .get(url)
             .timeout(Duration::from_secs(15));
         if is_claude {
             builder = builder
-                .header("x-api-key", &effective_key)
+                .header("x-api-key", effective_key)
                 .header("anthropic-version", "2023-06-01");
             if url.contains("api.anthropic.com") && !url.contains('?') {
                 builder = builder.query(&[("limit", "100")]);
             }
         } else if !effective_key.is_empty() {
-            builder = builder.bearer_auth(&effective_key);
+            builder = builder.bearer_auth(effective_key);
         }
 
         let secrets: Vec<&str> = if effective_key.is_empty() {
             Vec::new()
         } else {
-            vec![effective_key.as_str()]
+            vec![effective_key]
         };
 
         let resp = builder.send().await.map_err(|e| {
@@ -328,6 +313,69 @@ impl Translator {
             return Err(format!("{} endpoint returned an empty model list.", label));
         }
         Ok(models)
+    }
+
+    pub async fn fetch_endpoint_models(
+        &self,
+        req: &ProviderModelsRequest,
+    ) -> Result<Vec<String>, String> {
+        let cfg = self.get_config().await;
+        let mode = req.mode.trim().to_ascii_lowercase();
+        let (label, url, ollama_fallback, effective_key, is_claude) = match mode.as_str() {
+            "claude" => {
+                let key = first_non_empty(&req.api_key, &cfg.claude_api_key);
+                if key.is_empty() {
+                    return Err("Enter a Claude API key before fetching models.".to_string());
+                }
+                let base = first_non_empty(&req.base_url, &cfg.claude_base_url);
+                ("Claude", resolve_claude_models_url(&base), None, key, true)
+            }
+            "openai" => {
+                let key = first_non_empty(&req.api_key, &cfg.deepseek_api_key);
+                let base = first_non_empty(&req.base_url, &cfg.openai_base_url);
+                let resolved_url = resolve_openai_models_url(&base);
+                if key.is_empty() && !is_loopback_url(&resolved_url) {
+                    return Err(
+                        "Enter an OpenAI-compatible API key before fetching models.".to_string(),
+                    );
+                }
+                ("OpenAI-compatible", resolved_url, None, key, false)
+            }
+            "byom" => {
+                let key = first_non_empty(&req.api_key, &cfg.byom_api_key);
+                let base = first_non_empty(&req.base_url, &cfg.byom_base_url);
+                let resolved_url = resolve_openai_models_url(&base);
+                let tags_url = resolve_ollama_tags_url(&base);
+                (
+                    "BYOM / Ollama",
+                    resolved_url,
+                    Some(tags_url),
+                    key,
+                    false,
+                )
+            }
+            other => {
+                return Err(format!("Unsupported model lookup mode '{}'.", other));
+            }
+        };
+
+        match self
+            .request_models_url(&url, label, &effective_key, is_claude)
+            .await
+        {
+            Ok(models) => Ok(models),
+            Err(primary_err) => {
+                if let Some(tags_url) = ollama_fallback {
+                    if let Ok(models) = self
+                        .request_models_url(&tags_url, label, &effective_key, false)
+                        .await
+                    {
+                        return Ok(models);
+                    }
+                }
+                Err(primary_err)
+            }
+        }
     }
 
     pub async fn translate_bubbles(

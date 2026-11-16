@@ -22,7 +22,25 @@ const RELEASES_URL: &str = "https://api.github.com/repos/ggml-org/llama.cpp/rele
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const LOG_TAIL_CHARS: usize = 800;
-const CONTEXT_SIZE: &str = "4096";
+
+fn local_context_size(backend: EngineBackend, family: LocalModelFamily) -> &'static str {
+    if backend.offloads_to_gpu() && family != LocalModelFamily::HyMt2_7B {
+        "6144"
+    } else {
+        "4096"
+    }
+}
+
+fn local_parallel_slots(backend: EngineBackend, family: LocalModelFamily) -> &'static str {
+    if !backend.offloads_to_gpu() {
+        return "2";
+    }
+    if family == LocalModelFamily::HyMt2_7B {
+        "4"
+    } else {
+        "6"
+    }
+}
 
 #[derive(Deserialize)]
 struct ReleaseInfo {
@@ -234,13 +252,24 @@ impl LocalRuntime {
             .arg(model_path)
             .args(["--host", "127.0.0.1", "--port"])
             .arg(LOCAL_SERVER_PORT.to_string())
-            .args(["-c", CONTEXT_SIZE])
+            .args([
+                "-c",
+                local_context_size(backend, family),
+                "-np",
+                local_parallel_slots(backend, family),
+                "-cb",
+                "--threads-http",
+                "4",
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::from(log_file))
             .stderr(Stdio::from(error_log))
             .kill_on_drop(true);
         if family == LocalModelFamily::Lfm3 {
             command.args(["--chat-template-kwargs", r#"{"enable_thinking":false}"#]);
+        }
+        if backend == EngineBackend::Cuda {
+            command.args(["-fa", "on"]);
         }
         if backend.offloads_to_gpu() {
             command.args(["-ngl", "99"]);

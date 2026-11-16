@@ -312,6 +312,11 @@
                                     <span class="mode-btn-title">Local Model</span>
                                     <span class="mode-btn-sub">Offline GGUF runtime</span>
                                 </button>
+                                <button type="button" class="mode-btn" role="radio" aria-checked="false"
+                                    data-viewing="false" data-mode="byom">
+                                    <span class="mode-btn-title">BYOM (Ollama)</span>
+                                    <span class="mode-btn-sub">Custom host / Ollama</span>
+                                </button>
                                 <!-- FREE_MODE_BUTTON -->
                             </div>
                         </div>
@@ -462,9 +467,9 @@
                                         <select id="local-model"></select>
                                         <button type="button" class="btn-secondary" id="local-auto-btn">Auto-detect</button>
                                     </div>
-                                    <span class="field-hint">Tencent Hy-MT2 1.8B, HY-MT1.5 1.8B, LiquidAI LFM3 1.7B (auto-downloaded
-                                        from Hugging Face), or built-in Google Translate (no download or API key
-                                        needed).</span>
+                                    <span class="field-hint">Tencent Hy-MT2 1.8B / 7B, HY-MT1.5 1.8B, LiquidAI LFM3 1.7B
+                                        (auto-downloaded from Hugging Face), or built-in Google Translate (no download
+                                        or API key needed).</span>
                                 </div>
                                 <div class="local-runtime">
                                     <div class="progress-track" id="local-progress" hidden>
@@ -477,6 +482,39 @@
                                         <button type="button" class="btn-secondary" id="local-stop-btn"
                                             disabled>Stop</button>
                                     </div>
+                                </div>
+                            </div>
+
+                            <div class="mode-section" id="section-byom">
+                                <div class="field">
+                                    <label for="byom-url">Ollama / Custom Host URL</label>
+                                    <input type="url" id="byom-url" placeholder="http://127.0.0.1:11434"
+                                        spellcheck="false" />
+                                    <span class="field-hint">Connect to your own Ollama (<code>http://127.0.0.1:11434</code>),
+                                        LM Studio (<code>http://127.0.0.1:1234</code>), llama.cpp server, or LAN PC IP.</span>
+                                </div>
+                                <div class="field">
+                                    <label for="byom-model">Model ID</label>
+                                    <div class="input-group">
+                                        <input type="text" id="byom-model" placeholder="qwen2.5:7b"
+                                            spellcheck="false" />
+                                        <button type="button" class="btn-secondary" id="byom-get-models-btn">Get
+                                            Models</button>
+                                    </div>
+                                    <select id="byom-model-select" hidden
+                                        aria-label="Available BYOM / Ollama models"></select>
+                                    <span class="field-hint">Click Get Models to fetch installed Ollama / local models,
+                                        or type any custom model tag (supports custom HY-MT Modelfiles too).</span>
+                                </div>
+                                <div class="field">
+                                    <label for="byom-key">API Key / Bearer Token (Optional)</label>
+                                    <div class="input-group">
+                                        <input type="password" id="byom-key" placeholder="Optional (not needed for Ollama)"
+                                            autocomplete="off" spellcheck="false" />
+                                        <button type="button" class="btn-secondary" id="toggle-byom-key"
+                                            aria-pressed="false" aria-controls="byom-key">Show</button>
+                                    </div>
+                                    <span class="field-hint">Leave blank for local Ollama / LM Studio without authentication.</span>
                                 </div>
                             </div>
 

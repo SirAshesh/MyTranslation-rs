@@ -342,6 +342,14 @@ mod tests {
         assert!(options.iter().any(|o| o.quant == GOOGLE_TRANSLATE_MODEL_ID && !o.recommended));
         assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q4_K_M" && o.family == "hy-mt2"));
         assert!(options.iter().any(|o| o.quant == "Hy-MT2-1.8B-Q8_0" && o.family == "hy-mt2"));
+        assert!(options.iter().any(|o| o.quant == "Hy-MT2-7B-Q4_K_M" && o.family == "hy-mt2-7b"));
+        assert!(options.iter().any(|o| o.quant == "HY-MT2-7B-Q8_0" && o.family == "hy-mt2-7b"));
         assert!(crate::model::is_hymt_model("Hy-MT2-1.8B-Q4_K_M"));
+        assert!(crate::model::is_hymt_model("Hy-MT2-7B-Q4_K_M"));
+        assert!(crate::model::is_hymt_model("hf.co/tencent/Hy-MT2-7B-GGUF"));
+        assert_eq!(
+            crate::utilities::resolve_ollama_tags_url("http://127.0.0.1:11434/v1"),
+            "http://127.0.0.1:11434/api/tags"
+        );
     }
 }
