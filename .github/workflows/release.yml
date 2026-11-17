@@ -133,37 +133,10 @@ jobs:
           name: ubuntu-artifact
           path: MyTranslation-rs-ubuntu-x64.tar.gz
 
-  package-extensions:
-    name: Package Browser Extensions
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Zip Chrome & Firefox Extensions Separately
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y zip
-          (cd extension/chrome && zip -r ../../chrome-extension.zip .)
-          (cd extension/firefox && zip -r ../../firefox-extension.zip .)
-          ls -lh chrome-extension.zip firefox-extension.zip
-
-      - name: Upload Chrome Extension Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: chrome-extension-artifact
-          path: chrome-extension.zip
-
-      - name: Upload Firefox Extension Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: firefox-extension-artifact
-          path: firefox-extension.zip
-
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-windows, build-ubuntu, package-extensions]
+    needs: [build-windows, build-ubuntu]
 
     steps:
       - name: Checkout repository
@@ -215,6 +188,4 @@ jobs:
           files: |
             MyTranslation-rs-windows-x64.zip
             MyTranslation-rs-ubuntu-x64.tar.gz
-            chrome-extension.zip
-            firefox-extension.zip
           generate_release_notes: true

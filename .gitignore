@@ -10,8 +10,8 @@ __pycache__/
 dummy/
 local/
 models/
+extension/
 *.png
-!extension/**/*.png
 *.webp
 !sample/
 !sample/**

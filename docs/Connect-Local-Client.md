@@ -16,7 +16,7 @@ Once the server is installed and running (see [Installation Guide](Installation.
 
 ## 2. Connect the Browser Extension
 
-1. For **MyTranslation Extension**, download `chrome-extension.zip` (Chrome, Brave, Edge) or `firefox-extension.zip` (Firefox) from the [Releases](https://github.com/SirAshesh/MyTranslation-rs/releases) page and load the unpacked folder (or use `extension/chrome` / `extension/firefox` from this repository).
+1. For **MyTranslation Extension**, install the Chrome or Firefox extension from its standalone repository at **[SirAshesh/MyTranslation-Extension](https://github.com/SirAshesh/MyTranslation-Extension)**.
 2. Open the **ImageTrans Extension** or **MyTranslation Extension** options page and set the **Server URL** to:
    ```
    http://127.0.0.1:5000

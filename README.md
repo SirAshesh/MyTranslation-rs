@@ -16,7 +16,7 @@ A fast, lightweight, and native Rust translation and typesetting server for mang
 - **Flexible Translation Backends**:
   - **Local Model**: 1-click built-in download and execution of Tencent HY-MT1.5 1.8B or LiquidAI LFM3 1.7B with automatic hardware detection (NVIDIA CUDA, AMD/Intel Vulkan, or CPU).
   - **Cloud APIs**: OpenAI-compatible (DeepSeek, OpenAI, OpenRouter) and Claude-compatible endpoints.
-- **Browser Extension Ready**: Includes standalone **MyTranslation** extensions for Chrome (`chrome-extension.zip`) and Firefox (`firefox-extension.zip`).
+- **Browser Extension Ready**: Compatible with the standalone **[MyTranslation Extension](https://github.com/SirAshesh/MyTranslation-Extension)** for Chrome and Firefox (maintained in its own repository).
 
 ## Sample
 
