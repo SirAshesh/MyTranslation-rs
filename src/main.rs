@@ -10,8 +10,7 @@ use server_rs::handlers::*;
 use server_rs::model::AppConfig;
 use server_rs::pipe::{ComicRenderer, OcrManager, Pipeline, Translator};
 use server_rs::utilities::{
-    recommended_local_model, resolve_storage_path, ImageQueue, IpRateLimiter, StatsTracker,
-    StorageDb,
+    resolve_storage_path, ImageQueue, IpRateLimiter, StatsTracker, StorageDb,
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -35,9 +34,6 @@ fn default_config_from_env() -> AppConfig {
     let mut cfg = AppConfig::default();
     cfg.port = port;
     cfg.deepseek_api_key = key;
-    if let Some(recommended) = recommended_local_model() {
-        cfg.local_model = recommended;
-    }
     cfg
 }
 

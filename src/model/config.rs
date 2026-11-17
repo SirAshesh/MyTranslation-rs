@@ -1,5 +1,5 @@
 use super::domain::{default_source_lang, default_target_lang};
-use super::local::DEFAULT_LOCAL_QUANT;
+use super::local::GOOGLE_TRANSLATE_MODEL_ID;
 #[cfg(feature = "free-mode")]
 use crate::pipe::free_mode::{FreeModeConfig, FreeSettingsForm, FreeSettingsResponse};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ fn default_port() -> u16 {
 }
 
 fn default_mode() -> String {
-    "openai".to_string()
+    "local".to_string()
 }
 
 fn default_openai_url() -> String {
@@ -29,7 +29,7 @@ fn default_claude_model() -> String {
 }
 
 fn default_local_model() -> String {
-    DEFAULT_LOCAL_QUANT.to_string()
+    GOOGLE_TRANSLATE_MODEL_ID.to_string()
 }
 
 fn default_byom_url() -> String {
