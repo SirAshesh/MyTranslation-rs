@@ -277,6 +277,7 @@ pub async fn translate_handler(
         .as_deref()
         .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    let render_mode = crate::pipe::RenderMode::from_form_value(form.render_mode.as_deref());
 
     let _queue_permit = acquire_queue_if_enabled(&state, &cfg).await;
 
@@ -287,6 +288,7 @@ pub async fn translate_handler(
             &form.source_lang,
             &form.target_lang,
             without_image,
+            render_mode,
         )
         .await
     {
@@ -384,7 +386,13 @@ pub async fn translate_region_handler(
     let t0 = std::time::Instant::now();
     match state
         .pipeline
-        .process_image(image_bytes, &form.source_lang, &form.target_lang, true)
+        .process_image(
+            image_bytes,
+            &form.source_lang,
+            &form.target_lang,
+            true,
+            crate::pipe::RenderMode::Full,
+        )
         .await
     {
         Ok((_, img_map, timings)) => {
@@ -492,6 +500,7 @@ pub async fn batch_translate_handler(
                 &payload.source_lang,
                 &payload.target_lang,
                 false,
+                crate::pipe::RenderMode::Full,
             )
             .await
         {

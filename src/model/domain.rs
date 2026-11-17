@@ -15,6 +15,8 @@ pub struct TranslateForm {
     pub display_name: Option<String>,
     #[serde(rename = "saveToFile", default)]
     pub save_to_file: Option<String>,
+    #[serde(rename = "renderMode", default)]
+    pub render_mode: Option<String>,
     #[serde(default)]
     pub r#type: Option<String>,
     #[serde(default)]
@@ -64,6 +66,10 @@ pub struct BoxItem {
     pub geometry: Geometry,
     #[serde(rename = "targetGeometry")]
     pub target_geometry: Geometry,
+    #[serde(rename = "angleRad", skip_serializing_if = "Option::is_none")]
+    pub angle_rad: Option<f32>,
+    #[serde(rename = "isLeftAligned", skip_serializing_if = "Option::is_none")]
+    pub is_left_aligned: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Clone)]

@@ -270,3 +270,38 @@ fn curved_oval_tightens_top_bottom_width_and_vertical_cjk_expands_into_oval() {
         }
     }
 }
+
+#[test]
+fn target_rect_centers_inside_tall_oval_when_ocr_is_upper_half() {
+    let mut img = RgbImage::from_pixel(320, 420, Rgb([30, 30, 30]));
+    let cx = 180.0_f32;
+    let cy = 200.0_f32;
+    let rx_rad = 85.0_f32;
+    let ry_rad = 135.0_f32;
+    for y in 0..420_u32 {
+        for x in 0..320_u32 {
+            let norm = ((x as f32 - cx) / rx_rad).powi(2) + ((y as f32 - cy) / ry_rad).powi(2);
+            if norm <= 0.94 {
+                img.put_pixel(x, y, Rgb([255, 255, 255]));
+            } else if norm <= 1.06 {
+                img.put_pixel(x, y, Rgb([15, 15, 15]));
+            }
+        }
+    }
+
+    let upper_ocr = make_render_bubble(1, 118.0, 82.0, 242.0, 148.0);
+    let rect = super::resolve_bubble_interior_rect(&img, &upper_ocr, &[upper_ocr.clone()]);
+    let rect_cy = rect.y as f32 + rect.height as f32 * 0.5;
+    assert!(
+        (rect_cy - cy).abs() <= 18.0,
+        "expected target rect vertically centered near oval center {}, got {} (rect: {:?})",
+        cy,
+        rect_cy,
+        rect
+    );
+    assert!(
+        rect.height >= 210,
+        "expected target rect to span tall oval interior height, got {:?}",
+        rect
+    );
+}

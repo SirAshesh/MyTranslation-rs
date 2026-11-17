@@ -166,7 +166,7 @@ pub(super) fn detect_vertical_bubble_bounds(
     let (w, h) = (img.width() as i32, img.height() as i32);
     let cx = (center_x.round() as i32).clamp(0, w - 1);
     let cy = (center_y.round() as i32).clamp(0, h - 1);
-    let max_scan = (base_h * 0.80 + 48.0).min(h as f32 * 0.45) as i32;
+    let max_scan = ((base_h * 3.0).max(280.0)).min(h as f32 * 0.65) as i32;
     let (min_y, max_y) = ((cy - max_scan).max(0), (cy + max_scan).min(h - 1));
     let (mut max_top_border_y, mut min_bot_border_y, mut hit_both) = (0.0_f32, h as f32, 0usize);
 
@@ -228,5 +228,109 @@ pub(super) fn clamp_bounds_against_neighbors(
                 *top_limit = (*top_limit).max((mid + 2.0).min(target.y1));
             }
         }
+    }
+}
+
+pub fn resolve_bubble_interior_rect(
+    img: &RgbImage,
+    bubble: &Bubble,
+    all_bubbles: &[Bubble],
+) -> crate::model::Geometry {
+    let fallback = crate::model::Geometry {
+        x: bubble.x1.round() as i32,
+        y: bubble.y1.round() as i32,
+        width: (bubble.w.round() as i32).max(24),
+        height: (bubble.h.round() as i32).max(20),
+    };
+    if bubble.angle_rad.abs() >= 0.026 {
+        return fallback;
+    }
+
+    let orig_cx = if bubble.oriented_w > 1.0 {
+        bubble.cx
+    } else {
+        (bubble.x1 + bubble.x2) * 0.5
+    };
+    let orig_cy = if bubble.oriented_h > 1.0 {
+        bubble.cy
+    } else {
+        (bubble.y1 + bubble.y2) * 0.5
+    };
+    let base_w = if bubble.oriented_w > 1.0 {
+        bubble.oriented_w
+    } else {
+        bubble.w
+    };
+    let base_h = if bubble.oriented_h > 1.0 {
+        bubble.oriented_h
+    } else {
+        bubble.h
+    };
+
+    let (mut left_limit, mut right_limit) = (0.0_f32, img.width() as f32);
+    let (mut top_limit, mut bot_limit) = (0.0_f32, img.height() as f32);
+    clamp_bounds_against_neighbors(
+        bubble,
+        all_bubbles,
+        &mut left_limit,
+        &mut right_limit,
+        &mut top_limit,
+        &mut bot_limit,
+    );
+
+    let Some((left_b, right_b)) =
+        detect_horizontal_bubble_bounds(img, orig_cx, orig_cy, base_w, base_h)
+    else {
+        return fallback;
+    };
+    let left_safe = (left_b + 8.0).max(left_limit);
+    let right_safe = (right_b - 8.0).min(right_limit);
+    if right_safe < left_safe + 24.0 {
+        return fallback;
+    }
+    let center_x = (left_safe + right_safe) * 0.5;
+    let mut box_w = (right_safe - left_safe).max(24.0);
+
+    let (top_safe, bot_safe) = if let Some((top_b, bot_b)) =
+        detect_vertical_bubble_bounds(img, center_x, orig_cy, base_h.max(base_w))
+    {
+        let ts = (top_b + 8.0).max(top_limit);
+        let bs = (bot_b - 8.0).min(bot_limit);
+        if bs >= ts + 20.0 {
+            (ts, bs)
+        } else {
+            (bubble.y1.max(top_limit), bubble.y2.min(bot_limit))
+        }
+    } else {
+        (bubble.y1.max(top_limit), bubble.y2.min(bot_limit))
+    };
+
+    let box_h = (bot_safe - top_safe).max(20.0);
+    let mid_y = (top_safe + bot_safe) * 0.5;
+    if let Some((mid_lb, mid_rb)) =
+        detect_horizontal_bubble_bounds(img, center_x, mid_y, base_w.max(box_h * 0.5), box_h)
+    {
+        let ml = (mid_lb + 8.0).max(left_limit);
+        let mr = (mid_rb - 8.0).min(right_limit);
+        if mr >= ml + 24.0 {
+            box_w = (mr - ml).max(24.0);
+        }
+    }
+    if let Some(cap_span) = measure_block_cap_safe_span(
+        img,
+        center_x,
+        box_w.max(base_w),
+        box_h.max(base_h),
+        top_safe + box_h * 0.22,
+        top_safe + box_h * 0.78,
+    ) {
+        box_w = box_w.min(cap_span).max(24.0);
+    }
+
+    crate::model::Geometry {
+        x: (center_x - box_w * 0.5).round().max(0.0) as i32,
+        y: top_safe.round().max(0.0) as i32,
+        width: box_w.round().max(24.0) as i32,
+        height: box_h.round().max(20.0) as i32,
     }
 }

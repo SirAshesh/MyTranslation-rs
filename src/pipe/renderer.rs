@@ -1,6 +1,8 @@
 #[path = "renderer_bounds.rs"]
 mod renderer_bounds;
 
+pub use renderer_bounds::resolve_bubble_interior_rect;
+
 use crate::model::Bubble;
 use ab_glyph::{Font, FontArc, PxScale, PxScaleFont, ScaleFont};
 use image::{Rgb, RgbImage, Rgba, RgbaImage};

@@ -24,6 +24,7 @@ use crate::utilities::PipelineTimings;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use image::{ImageFormat, ImageReader, Limits, RgbImage};
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -73,6 +74,25 @@ fn decode_bounded_rgb_image(image_bytes: &[u8]) -> Result<RgbImage, String> {
         .to_rgb8())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderMode {
+    Full,
+    CleanOnly,
+    CleanWithText,
+}
+
+impl RenderMode {
+    pub fn from_form_value(raw: Option<&str>) -> Self {
+        match raw.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("clean_only") | Some("clean") => Self::CleanOnly,
+            Some("clean_with_text") | Some("clean_and_text") | Some("editor") => {
+                Self::CleanWithText
+            }
+            _ => Self::Full,
+        }
+    }
+}
+
 pub struct Pipeline {
     pub ocr: Arc<OcrManager>,
     pub translator: Translator,
@@ -98,6 +118,7 @@ impl Pipeline {
         source_lang: &str,
         target_lang: &str,
         without_image: bool,
+        render_mode: RenderMode,
     ) -> Result<(Option<String>, ImgMap, PipelineTimings), String> {
         let t_start = std::time::Instant::now();
 
@@ -169,72 +190,101 @@ impl Pipeline {
             return Ok((encoded, ImgMap { boxes: Vec::new() }, timings));
         }
 
-        let t_tr = std::time::Instant::now();
-        let llm_output = self
-            .translator
-            .translate_bubbles(&bubbles, &effective_source_lang, target_lang)
-            .await?;
-        let translations = Arc::new(llm_output.translations);
-        let translate_ms = t_tr.elapsed().as_millis() as u64;
-        info!(
-            "Translated {} bubbles in {:?}",
-            translations.len(),
-            t_tr.elapsed()
-        );
+        let (translations, translate_ms, usage) = if render_mode == RenderMode::CleanOnly {
+            (Arc::new(HashMap::new()), 0, Default::default())
+        } else {
+            let t_tr = std::time::Instant::now();
+            let llm_output = self
+                .translator
+                .translate_bubbles(&bubbles, &effective_source_lang, target_lang)
+                .await?;
+            let translations = Arc::new(llm_output.translations);
+            let translate_ms = t_tr.elapsed().as_millis() as u64;
+            info!(
+                "Translated {} bubbles in {:?}",
+                translations.len(),
+                t_tr.elapsed()
+            );
+            (translations, translate_ms, llm_output.usage)
+        };
 
         let t_render = std::time::Instant::now();
-        let base64_image = if !without_image {
-            let renderable_bubbles: Vec<_> = bubbles
-                .iter()
-                .filter(|b| self.renderer.renderable_text(b, &translations).is_some())
-                .cloned()
-                .collect();
-            if renderable_bubbles.len() < bubbles.len() {
-                warn!(
-                    "Skipping inpainting on {} bubble(s) without renderable translation text ({}/{} renderable)",
-                    bubbles.len() - renderable_bubbles.len(),
-                    renderable_bubbles.len(),
-                    bubbles.len()
-                );
-            }
+        let (base64_image, resolved_geoms) = if !without_image {
+            let renderable_bubbles: Vec<_> = if render_mode == RenderMode::CleanOnly {
+                bubbles.clone()
+            } else {
+                let filtered: Vec<_> = bubbles
+                    .iter()
+                    .filter(|b| self.renderer.renderable_text(b, &translations).is_some())
+                    .cloned()
+                    .collect();
+                if filtered.len() < bubbles.len() {
+                    warn!(
+                        "Skipping inpainting on {} bubble(s) without renderable translation text ({}/{} renderable)",
+                        bubbles.len() - filtered.len(),
+                        filtered.len(),
+                        bubbles.len()
+                    );
+                }
+                filtered
+            };
 
             let renderer = Arc::clone(&self.renderer);
             let translations_for_render = Arc::clone(&translations);
-            let encoded = tokio::task::spawn_blocking(move || -> Result<String, String> {
-                let mut img = img;
-                let (inpaint_elapsed, render_elapsed) = if !renderable_bubbles.is_empty() {
-                    let t_inpaint = std::time::Instant::now();
-                    clean_image_text(&mut img, &renderable_bubbles);
-                    let inpaint_elapsed = t_inpaint.elapsed();
+            let bubbles_for_geom = bubbles.clone();
+            let draw_text = render_mode == RenderMode::Full;
+            let (encoded, resolved_geoms) =
+                tokio::task::spawn_blocking(move || -> Result<(String, HashMap<usize, Geometry>), String> {
+                    let mut img = img;
+                    let mut resolved_geoms = HashMap::with_capacity(bubbles_for_geom.len());
+                    let (inpaint_elapsed, render_elapsed) = if !renderable_bubbles.is_empty() {
+                        let t_inpaint = std::time::Instant::now();
+                        clean_image_text(&mut img, &renderable_bubbles);
+                        let inpaint_elapsed = t_inpaint.elapsed();
 
-                    let t_draw = std::time::Instant::now();
-                    renderer.render_bubbles(&mut img, &renderable_bubbles, &translations_for_render);
-                    let render_elapsed = t_draw.elapsed();
+                        for b in &bubbles_for_geom {
+                            resolved_geoms.insert(
+                                b.id,
+                                renderer::resolve_bubble_interior_rect(&img, b, &bubbles_for_geom),
+                            );
+                        }
 
-                    (inpaint_elapsed, render_elapsed)
-                } else {
-                    (std::time::Duration::ZERO, std::time::Duration::ZERO)
-                };
+                        let render_elapsed = if draw_text {
+                            let t_draw = std::time::Instant::now();
+                            renderer.render_bubbles(
+                                &mut img,
+                                &renderable_bubbles,
+                                &translations_for_render,
+                            );
+                            t_draw.elapsed()
+                        } else {
+                            std::time::Duration::ZERO
+                        };
 
-                let t_encode = std::time::Instant::now();
-                let encoded = encode_webp_base64(&img, width, height)?;
-                let encode_elapsed = t_encode.elapsed();
+                        (inpaint_elapsed, render_elapsed)
+                    } else {
+                        (std::time::Duration::ZERO, std::time::Duration::ZERO)
+                    };
 
-                info!(
-                    "Inpainting, rendering & encoding completed in {:?} (inpaint: {:?}, render: {:?}, encode: {:?})",
-                    t_render.elapsed(),
-                    inpaint_elapsed,
-                    render_elapsed,
-                    encode_elapsed
-                );
-                Ok(encoded)
-            })
-            .await
-            .map_err(|e| format!("Image render/encode task failed: {}", e))??;
+                    let t_encode = std::time::Instant::now();
+                    let encoded = encode_webp_base64(&img, width, height)?;
+                    let encode_elapsed = t_encode.elapsed();
 
-            Some(encoded)
+                    info!(
+                        "Inpainting, rendering & encoding completed in {:?} (inpaint: {:?}, render: {:?}, encode: {:?})",
+                        t_render.elapsed(),
+                        inpaint_elapsed,
+                        render_elapsed,
+                        encode_elapsed
+                    );
+                    Ok((encoded, resolved_geoms))
+                })
+                .await
+                .map_err(|e| format!("Image render/encode task failed: {}", e))??;
+
+            (Some(encoded), resolved_geoms)
         } else {
-            None
+            (None, HashMap::new())
         };
         let render_ms = if !without_image {
             t_render.elapsed().as_millis() as u64
@@ -244,10 +294,14 @@ impl Pipeline {
 
         let mut boxes = Vec::new();
         for b in &bubbles {
-            let target = translations
-                .get(&b.id)
-                .cloned()
-                .unwrap_or_else(|| b.source_text.clone());
+            let target = if render_mode == RenderMode::CleanOnly {
+                String::new()
+            } else {
+                translations
+                    .get(&b.id)
+                    .cloned()
+                    .unwrap_or_else(|| b.source_text.clone())
+            };
 
             let geom = Geometry {
                 x: b.x1 as i32,
@@ -255,12 +309,15 @@ impl Pipeline {
                 width: b.w as i32,
                 height: b.h as i32,
             };
+            let target_geometry = resolved_geoms.get(&b.id).cloned().unwrap_or_else(|| geom.clone());
 
             boxes.push(BoxItem {
                 text: b.source_text.clone(),
                 target,
-                geometry: geom.clone(),
-                target_geometry: geom,
+                geometry: geom,
+                target_geometry,
+                angle_rad: Some(b.angle_rad),
+                is_left_aligned: Some(b.is_left_aligned),
             });
         }
 
@@ -270,7 +327,7 @@ impl Pipeline {
             render_ms,
             total_ms: t_start.elapsed().as_millis() as u64,
             bubble_count: bubbles.len(),
-            usage: llm_output.usage,
+            usage,
         };
         info!("Total pipeline processing time: {:?}", t_start.elapsed());
         Ok((base64_image, ImgMap { boxes }, timings))
@@ -284,4 +341,31 @@ fn encode_webp_base64(img: &RgbImage, width: u32, height: u32) -> Result<String,
     img.write_to(&mut cursor, ImageFormat::WebP)
         .map_err(|e| format!("Failed to encode WebP image: {}", e))?;
     Ok(BASE64.encode(&output_bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RenderMode;
+
+    #[test]
+    fn render_mode_parses_extension_modes() {
+        assert_eq!(RenderMode::from_form_value(None), RenderMode::Full);
+        assert_eq!(RenderMode::from_form_value(Some("full")), RenderMode::Full);
+        assert_eq!(
+            RenderMode::from_form_value(Some("clean_only")),
+            RenderMode::CleanOnly
+        );
+        assert_eq!(
+            RenderMode::from_form_value(Some(" CLEAN ")),
+            RenderMode::CleanOnly
+        );
+        assert_eq!(
+            RenderMode::from_form_value(Some("clean_with_text")),
+            RenderMode::CleanWithText
+        );
+        assert_eq!(
+            RenderMode::from_form_value(Some("editor")),
+            RenderMode::CleanWithText
+        );
+    }
 }
